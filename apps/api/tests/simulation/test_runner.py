@@ -46,3 +46,34 @@ def test_stop_is_idempotent(runner):
     runner.stop()
     runner.stop()  # must not raise
     assert runner.is_running is False
+
+
+def test_trigger_collision_stops_vehicles_on_the_target_edge(runner):
+    for _ in range(5):
+        runner.step()
+    result = runner.trigger_collision("AB")
+    assert result.incident_edge_id == "AB"
+    assert set(result.vehicle_ids).issubset({"veh0", "veh1", "veh2"})
+
+    for _ in range(5):
+        runner.step()
+    states = {v.id: v for v in runner.get_vehicle_states()}
+    for veh_id in result.vehicle_ids:
+        assert states[veh_id].speed == 0.0
+
+
+def test_trigger_collision_raises_for_edge_with_no_vehicles(runner):
+    with pytest.raises(ValueError):
+        runner.trigger_collision("ZZ")
+
+
+def test_pick_busy_edge_raises_when_simulation_is_empty(runner):
+    with pytest.raises(ValueError):
+        runner.pick_busy_edge()
+
+
+def test_pick_busy_edge_returns_an_edge_with_vehicles(runner):
+    for _ in range(5):
+        runner.step()
+    edge = runner.pick_busy_edge()
+    assert edge in {"AB", "BC"}
