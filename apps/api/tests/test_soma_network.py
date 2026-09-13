@@ -21,11 +21,11 @@ SOMA_LNG_MIN, SOMA_LNG_MAX = -122.41, -122.39
 
 # The route file is generated with `randomTrips.py --seed 42 --period 3`.
 # Observed vehicle counts after stepping the real network are deterministic
-# across runs: ~20 vehicles at t=60s, ~56 vehicles at t=200s. 200 steps gives
+# across runs: ~20 vehicles at t=60s, ~60 vehicles at t=200s. 200 steps gives
 # traffic time to build up without needlessly slowing the test suite.
 STEPS_TO_LET_TRAFFIC_BUILD = 200
 
-# Threshold set well below the ~56 vehicles actually observed at t=200s with
+# Threshold set well below the ~60 vehicles actually observed at t=200s with
 # the fixed seed, so the test tolerates minor SUMO-version/platform variance
 # in exact vehicle counts while still failing if background traffic
 # generation is broken (e.g. an empty or near-empty route file).
