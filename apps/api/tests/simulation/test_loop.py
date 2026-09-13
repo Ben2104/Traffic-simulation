@@ -1,17 +1,23 @@
+import pytest
+
+from app.simulation.errors import SimulationError
 from app.simulation.loop import tick_once
 from app.simulation.models import VehicleState
 
 
 class _StubRunner:
-    def __init__(self, vehicles=None, raise_on_step=False, running=True):
+    def __init__(self, vehicles=None, raise_on_step=False, running=True, step_error=None):
         self._vehicles = vehicles or []
         self._raise_on_step = raise_on_step
+        self._step_error = step_error
         self.is_running = running
         self.failed = False
 
     def step(self):
         if self._raise_on_step:
-            raise RuntimeError("traci died")
+            raise SimulationError("traci died")
+        if self._step_error is not None:
+            raise self._step_error
 
     def get_vehicle_states(self):
         return self._vehicles
@@ -42,3 +48,10 @@ async def test_tick_once_returns_offline_frame_when_runner_not_running():
     runner = _StubRunner(running=False)
     frame = await tick_once(runner, tick=1)
     assert frame == {"type": "simulation.error", "message": "simulation offline"}
+
+
+async def test_tick_once_propagates_programming_errors_without_marking_failed():
+    runner = _StubRunner(step_error=TypeError("boom"))
+    with pytest.raises(TypeError):
+        await tick_once(runner, tick=1)
+    assert runner.failed is False

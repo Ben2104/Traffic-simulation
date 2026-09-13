@@ -2,6 +2,7 @@ import uuid
 
 import traci
 
+from .errors import SimulationError
 from .models import VehicleState, CollisionResult
 
 
@@ -53,25 +54,31 @@ class SimulationRunner:
         self._running = False
 
     def step(self) -> None:
-        traci.switch(self._label)
-        traci.simulationStep()
+        try:
+            traci.switch(self._label)
+            traci.simulationStep()
+        except traci.TraCIException as exc:
+            raise SimulationError(str(exc)) from exc
 
     def get_vehicle_states(self) -> list[VehicleState]:
-        traci.switch(self._label)
-        states = []
-        for veh_id in traci.vehicle.getIDList():
-            x, y = traci.vehicle.getPosition(veh_id)
-            lon, lat = traci.simulation.convertGeo(x, y)
-            states.append(
-                VehicleState(
-                    id=veh_id,
-                    lat=lat,
-                    lng=lon,
-                    heading=traci.vehicle.getAngle(veh_id),
-                    speed=traci.vehicle.getSpeed(veh_id),
+        try:
+            traci.switch(self._label)
+            states = []
+            for veh_id in traci.vehicle.getIDList():
+                x, y = traci.vehicle.getPosition(veh_id)
+                lon, lat = traci.simulation.convertGeo(x, y)
+                states.append(
+                    VehicleState(
+                        id=veh_id,
+                        lat=lat,
+                        lng=lon,
+                        heading=traci.vehicle.getAngle(veh_id),
+                        speed=traci.vehicle.getSpeed(veh_id),
+                    )
                 )
-            )
-        return states
+            return states
+        except traci.TraCIException as exc:
+            raise SimulationError(str(exc)) from exc
 
     def trigger_collision(self, edge_id: str) -> CollisionResult:
         traci.switch(self._label)

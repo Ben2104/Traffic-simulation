@@ -2,6 +2,7 @@ import os
 import pytest
 import traci
 
+from app.simulation.errors import SimulationError
 from app.simulation.runner import SimulationRunner
 
 FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
@@ -46,6 +47,17 @@ def test_stop_is_idempotent(runner):
     runner.stop()
     runner.stop()  # must not raise
     assert runner.is_running is False
+
+
+def test_step_raises_simulation_error_after_connection_is_closed(runner):
+    # After stop() closes the underlying TraCI connection, switching to the
+    # released label raises traci.TraCIException (see
+    # test_stop_after_mark_failed_still_closes_the_traci_connection above).
+    # step() must translate that into SimulationError at the boundary rather
+    # than letting the raw TraCIException escape.
+    runner.stop()
+    with pytest.raises(SimulationError):
+        runner.step()
 
 
 def test_trigger_collision_stops_vehicles_on_the_target_edge(runner):
