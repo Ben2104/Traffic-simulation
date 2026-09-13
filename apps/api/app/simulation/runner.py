@@ -19,6 +19,7 @@ class SimulationRunner:
         self.step_length = step_length
         self._label = f"sim-{uuid.uuid4().hex[:8]}"
         self._running = False
+        self._started = False
 
     @property
     def is_running(self) -> bool:
@@ -34,13 +35,19 @@ class SimulationRunner:
             "--no-warnings", "true",
         ]
         traci.start(cmd, label=self._label)
+        self._started = True
         self._running = True
 
     def stop(self) -> None:
-        if self._running:
+        if not self._started:
+            return
+        self._started = False
+        self._running = False
+        try:
             traci.switch(self._label)
             traci.close()
-            self._running = False
+        except Exception:
+            pass  # connection already dead (e.g. after mark_failed()); nothing left to close
 
     def mark_failed(self) -> None:
         self._running = False

@@ -1,5 +1,6 @@
 import os
 import pytest
+import traci
 
 from app.simulation.runner import SimulationRunner
 
@@ -29,3 +30,19 @@ def test_vehicles_depart_and_report_positions_after_stepping(runner):
     for v in states:
         assert isinstance(v.lat, float)
         assert isinstance(v.lng, float)
+
+
+def test_stop_after_mark_failed_still_closes_the_traci_connection(runner):
+    label = runner._label
+    runner.mark_failed()
+    runner.stop()
+    # The connection must actually be closed, not just flagged internally:
+    # switching to a label that traci.close() released raises TraCIException.
+    with pytest.raises(traci.TraCIException):
+        traci.switch(label)
+
+
+def test_stop_is_idempotent(runner):
+    runner.stop()
+    runner.stop()  # must not raise
+    assert runner.is_running is False
