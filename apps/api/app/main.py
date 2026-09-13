@@ -20,7 +20,11 @@ async def lifespan(app: FastAPI):
         route_file=settings.sumo_route_file,
         sumo_binary=settings.sumo_binary,
     )
-    runner.start()
+    try:
+        runner.start()
+    except Exception:
+        runner.stop()
+        raise
     deps.deps.runner = runner
     deps.deps.store = IncidentStore()
 
