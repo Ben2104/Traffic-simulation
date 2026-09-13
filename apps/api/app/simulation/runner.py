@@ -82,27 +82,42 @@ class SimulationRunner:
         if not vehicle_ids:
             raise ValueError(f"no vehicles present on edge {edge_id!r}")
 
-        stopped = vehicle_ids[:2]
-        x, y = traci.vehicle.getPosition(stopped[0])
-        lon, lat = traci.simulation.convertGeo(x, y)
-
-        for veh_id in stopped:
+        # SUMO rejects a stop positioned inside the vehicle's current braking
+        # distance ("too close to brake"). Rather than assume every vehicle
+        # can be stopped, compute each one's required stop position (current
+        # lane position + braking distance + a small safety margin) and only
+        # treat it as stoppable if that position still fits on the lane.
+        # Vehicles too close to the lane end are excluded up front, so
+        # setStop is only ever called with a position the vehicle can
+        # actually reach.
+        lane_length = traci.lane.getLength(f"{edge_id}_0")
+        candidates: list[tuple[str, float]] = []
+        for veh_id in vehicle_ids:
             lane_pos = traci.vehicle.getLanePosition(veh_id)
-            # SUMO rejects a stop positioned inside the vehicle's current
-            # braking distance ("too close to brake"). Nudge the stop point
-            # forward by that braking distance plus a small safety margin so
-            # the vehicle can physically decelerate into it; without this,
-            # setStop raises for any vehicle already moving at the moment
-            # the collision is triggered.
             speed = traci.vehicle.getSpeed(veh_id)
             decel = traci.vehicle.getDecel(veh_id)
             brake_distance = (speed ** 2) / (2 * decel) if decel > 0 else 0.0
-            lane_length = traci.lane.getLength(f"{edge_id}_0")
-            stop_pos = min(lane_pos + brake_distance + 1.0, lane_length - 0.1)
+            stop_pos = lane_pos + brake_distance + 1.0
+            if stop_pos <= lane_length - 0.1:
+                candidates.append((veh_id, stop_pos))
+
+        if not candidates:
+            raise ValueError(
+                f"no vehicles on edge {edge_id!r} can be brought to a stop "
+                "before the end of the lane"
+            )
+
+        stopped = candidates[:2]
+        first_veh_id = stopped[0][0]
+        x, y = traci.vehicle.getPosition(first_veh_id)
+        lon, lat = traci.simulation.convertGeo(x, y)
+
+        for veh_id, stop_pos in stopped:
             traci.vehicle.setSpeed(veh_id, 0.0)
             traci.vehicle.setStop(veh_id, edge_id, pos=stop_pos, laneIndex=0, duration=9999)
 
-        return CollisionResult(incident_edge_id=edge_id, vehicle_ids=stopped, lat=lat, lng=lon)
+        stopped_ids = [veh_id for veh_id, _ in stopped]
+        return CollisionResult(incident_edge_id=edge_id, vehicle_ids=stopped_ids, lat=lat, lng=lon)
 
     def pick_busy_edge(self) -> str:
         traci.switch(self._label)

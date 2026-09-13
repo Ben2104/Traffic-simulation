@@ -77,3 +77,36 @@ def test_pick_busy_edge_returns_an_edge_with_vehicles(runner):
         runner.step()
     edge = runner.pick_busy_edge()
     assert edge in {"AB", "BC"}
+
+
+def test_trigger_collision_excludes_a_vehicle_too_close_to_the_lane_end(runner):
+    for _ in range(5):
+        runner.step()
+    # veh0 is fast-moving; teleport it to just short of AB's 200m end so its
+    # braking distance (~18.8m at its current speed) no longer fits on the
+    # lane. veh1/veh2 stay at their normal mid-lane positions and remain
+    # stoppable. This reproduces the "too close to brake" boundary without
+    # letting the exception escape trigger_collision.
+    traci.switch(runner._label)
+    traci.vehicle.moveTo("veh0", "AB_0", 191.0)
+
+    result = runner.trigger_collision("AB")
+
+    assert result.incident_edge_id == "AB"
+    assert "veh0" not in result.vehicle_ids
+    assert set(result.vehicle_ids).issubset({"veh1", "veh2"})
+
+
+def test_trigger_collision_raises_value_error_when_no_vehicle_can_be_stopped(runner):
+    for _ in range(5):
+        runner.step()
+    # Teleport every vehicle on AB to just short of its 200m end. At their
+    # current speeds none of them can brake to a stop before the lane ends,
+    # so trigger_collision must raise ValueError (not let the underlying
+    # TraCIException escape).
+    traci.switch(runner._label)
+    for veh_id in ("veh0", "veh1", "veh2"):
+        traci.vehicle.moveTo(veh_id, "AB_0", 191.0)
+
+    with pytest.raises(ValueError):
+        runner.trigger_collision("AB")
