@@ -3,6 +3,12 @@
 apps/api
 networks
 docs
+# The operator's real Mapbox token lives in a repo-root .env; keep it out of
+# the build context entirely so no future `COPY . .` can bake it into a layer.
+# The token reaches this image as a build ARG, never as a copied file.
+.env
+.env.*
+!.env.example
 .superpowers
 .git
 apps/web/node_modules

@@ -4,6 +4,11 @@
 # affecting the web build.
 apps/web
 docs
+# The operator's real Mapbox token lives in a repo-root .env; keep it out of
+# the build context entirely so no future `COPY . .` can bake it into a layer.
+.env
+.env.*
+!.env.example
 .superpowers
 .git
 **/__pycache__
