@@ -1,0 +1,18 @@
+# Docker looks for a file named "<dockerfile>.dockerignore" in the build
+# context root before falling back to a bare .dockerignore, so this file
+# scopes ignores to the api image's build context (repo root) without
+# affecting the web build.
+apps/web
+docs
+# The operator's real Mapbox token lives in a repo-root .env; keep it out of
+# the build context entirely so no future `COPY . .` can bake it into a layer.
+.env
+.env.*
+!.env.example
+.superpowers
+.git
+**/__pycache__
+**/*.pyc
+apps/api/.venv
+apps/api/.pytest_cache
+networks/soma/soma.osm
