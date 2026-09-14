@@ -19,10 +19,17 @@ export default function DashboardPage() {
   // so a *new* error message (different text) reappears even if the operator
   // dismissed a previous one, but a re-render of the same still-live error
   // does not resurrect a banner the operator already closed.
+  // Known limitation: dismissal keys off exact error text, so if the same
+  // error string recurs later (e.g. the same fault happens twice), the
+  // banner will not resurface for the second occurrence. Acceptable for
+  // this slice; revisit if error UX needs per-occurrence surfacing later.
   const [dismissedError, setDismissedError] = useState<string | null>(null);
   const showError = errorMessage !== null && errorMessage !== dismissedError;
 
   useEffect(() => {
+    // NEXT_PUBLIC_API_WS_URL is never set in this slice (no env-var
+    // indirection was introduced per controller resolution #3), so the
+    // hardcoded fallback is always the operative URL in practice.
     const wsUrl = process.env.NEXT_PUBLIC_API_WS_URL ?? "ws://localhost:8000/ws/simulation";
     const disconnect = connectSimulationSocket({
       url: wsUrl,
