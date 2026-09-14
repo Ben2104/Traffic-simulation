@@ -4,6 +4,11 @@ import MapView from "../components/MapView";
 import IncidentFeed from "../components/IncidentFeed";
 import IncidentToast from "../components/IncidentToast";
 import IncidentDetailPanel from "../components/IncidentDetailPanel";
+import NavRail from "../components/NavRail";
+import TopBar from "../components/TopBar";
+import KpiStrip from "../components/KpiStrip";
+import StatusBar from "../components/StatusBar";
+import { WarningIcon } from "../components/icons";
 import { useSimulationStore } from "../lib/store";
 import { connectSimulationSocket } from "../lib/ws-client";
 import type { Incident } from "../lib/types";
@@ -78,35 +83,71 @@ export default function DashboardPage() {
   }, [setIncidents]);
 
   return (
-    <div className="grid grid-cols-[280px_1fr_320px] h-screen">
-      <aside data-testid="incident-feed" className="border-r overflow-y-auto">
-        <IncidentFeed onSelectIncident={setSelectedIncident} selectedIncidentId={selectedIncident?.id ?? null} />
-      </aside>
-      <main data-testid="map-view" className="relative">
-        <IncidentToast />
-        {showError && (
-          <div
-            data-testid="error-banner"
-            role="alert"
-            className="absolute top-0 left-0 right-0 z-10 flex items-center justify-between bg-red-700 px-4 py-2 text-sm text-white"
+    // Layout mirrors the Stitch "Operations Overview" frame: operator rail,
+    // then a header + KPI strip stacked over the tactical map, with the
+    // incident queue and the selected ticket's telemetry down the right side.
+    <div className="flex h-screen w-screen overflow-hidden bg-background">
+      <NavRail />
+
+      <div className="flex min-w-0 flex-1 flex-col">
+        <TopBar />
+        <KpiStrip />
+
+        <div className="flex min-h-0 flex-1">
+          <main
+            data-testid="map-view"
+            className="relative min-w-0 flex-1 bg-surface-container-lowest"
           >
-            <span>{errorMessage}</span>
-            <button
-              onClick={() => setDismissedError(errorMessage)}
-              className="ml-4 font-semibold"
-            >
-              Dismiss
-            </button>
-          </div>
-        )}
-        <MapView
-          mapboxToken={process.env.NEXT_PUBLIC_MAPBOX_TOKEN ?? ""}
-          flyToTarget={selectedIncident ? selectedIncident.location : null}
-        />
-      </main>
-      <aside data-testid="incident-detail" className="border-l overflow-y-auto">
-        <IncidentDetailPanel incident={selectedIncident} />
-      </aside>
+            <IncidentToast />
+            {showError && (
+              <div
+                data-testid="error-banner"
+                role="alert"
+                className="absolute inset-x-0 top-0 z-10 flex items-center justify-between gap-3 border-b border-error/50 bg-error-container/90 px-4 py-2 backdrop-blur-sm"
+              >
+                <span className="flex min-w-0 items-center gap-2">
+                  <WarningIcon className="h-4 w-4 shrink-0 text-on-error-container" />
+                  <span className="text-label-caps shrink-0 text-on-error-container">
+                    Simulation Fault
+                  </span>
+                  <span className="truncate text-mono-md text-on-error-container">
+                    {errorMessage}
+                  </span>
+                </span>
+                <button
+                  onClick={() => setDismissedError(errorMessage)}
+                  className="shrink-0 rounded border border-on-error-container/40 px-2 py-0.5 text-mono-sm text-on-error-container transition-colors hover:bg-on-error-container/10"
+                >
+                  Dismiss
+                </button>
+              </div>
+            )}
+            <MapView
+              mapboxToken={process.env.NEXT_PUBLIC_MAPBOX_TOKEN ?? ""}
+              flyToTarget={selectedIncident ? selectedIncident.location : null}
+            />
+          </main>
+
+          <aside
+            data-testid="incident-feed"
+            className="w-[320px] shrink-0 overflow-hidden border-l border-outline-variant"
+          >
+            <IncidentFeed
+              onSelectIncident={setSelectedIncident}
+              selectedIncidentId={selectedIncident?.id ?? null}
+            />
+          </aside>
+
+          <aside
+            data-testid="incident-detail"
+            className="hidden w-[340px] shrink-0 overflow-hidden border-l border-outline-variant xl:block"
+          >
+            <IncidentDetailPanel incident={selectedIncident} />
+          </aside>
+        </div>
+
+        <StatusBar />
+      </div>
     </div>
   );
 }
