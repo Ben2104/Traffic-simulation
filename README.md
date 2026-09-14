@@ -90,12 +90,16 @@ collision only blocks lane 0 — traffic simply routes around through the open
 lanes and no jam forms. Even on a single-lane edge the queue tops out at
 roughly 3–4 halting vehicles.
 
-There is a second measured hazard: over 300 ticks from a cold start, the
-busiest edge was a *junction-internal* edge (`:<junction>_<n>`) on 46 of them
-(~15%). Triggering there succeeds, but it stops a car inside an intersection
-on a link a few metres long — no queue, and it reads as a glitch.
+`pick_busy_edge()` also skips junction-internal edges (ids starting with
+`:`), so it will never hand `trigger_collision` a few-metres-long internal
+link to stop a car on. (It used to: measured over 300 ticks from a cold
+start, the busiest edge was junction-internal on 46 of them, ~15% — that
+path is closed now.)
 
-So before presenting, pick a **single-lane** edge that carries traffic and
-pass it explicitly via the `edge_id` body field. The incident marker and the
-camera flyover work either way; the visible queue behind the blockage does
-not.
+The remaining, still-accurate caveat is the multi-lane one above: a random
+busy edge is multi-lane about two-thirds of the time, and blocking just lane
+0 of a multi-lane arterial will not produce a big jam — traffic routes
+around through the open lanes. So before presenting, pick a **single-lane**
+edge that carries traffic and pass it explicitly via the `edge_id` body
+field. The incident marker and the camera flyover work either way; the
+visible queue behind the blockage does not.

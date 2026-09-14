@@ -174,6 +174,46 @@ def test_trigger_collision_excludes_a_vehicle_too_close_to_the_lane_end(runner):
     assert set(result.vehicle_ids).issubset({"veh1", "veh2"})
 
 
+def test_pick_busy_edge_skips_junction_internal_edges():
+    # traci.vehicle.getRoadID() returns a junction-internal edge id (starting
+    # with ":") while a vehicle is physically inside the junction. On the
+    # fixture net that's ":B_0", a 0.10m lane a vehicle crosses in a fraction
+    # of a second — invisible at the default 1.0s step-length used by every
+    # other test here. Use a much finer step-length on a private runner so we
+    # can genuinely observe that state, then prove pick_busy_edge() filters
+    # it out rather than asserting on a state we never actually reached.
+    r = SimulationRunner(
+        net_file=FIXTURE_NET, route_file=FIXTURE_ROUTE, sumo_binary="sumo",
+        step_length=0.01,
+    )
+    r.start()
+    try:
+        traci.switch(r._label)
+        found_internal_edge = False
+        for _ in range(3000):  # 30s of sim time; veh0 hits :B_0 around t=14s
+            traci.simulationStep()
+            if any(
+                traci.vehicle.getRoadID(v).startswith(":")
+                for v in traci.vehicle.getIDList()
+            ):
+                found_internal_edge = True
+                break
+
+        # If this fails, the fixture/timing no longer reaches the internal
+        # state and the assertions below would pass vacuously - treat that
+        # as a failure rather than silently proving nothing.
+        assert found_internal_edge, (
+            "never observed a vehicle on a junction-internal edge; "
+            "cannot exercise the pick_busy_edge() filter"
+        )
+
+        edge = r.pick_busy_edge()
+        assert not edge.startswith(":")
+        assert edge in {"AB", "BC"}
+    finally:
+        r.stop()
+
+
 def test_trigger_collision_raises_value_error_when_no_vehicle_can_be_stopped(runner):
     for _ in range(5):
         runner.step()

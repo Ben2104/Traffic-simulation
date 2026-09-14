@@ -137,6 +137,10 @@ class SimulationRunner:
         for veh_id in traci.vehicle.getIDList():
             edge = traci.vehicle.getRoadID(veh_id)
             counts[edge] = counts.get(edge, 0) + 1
+        counts = {
+            e: n for e, n in counts.items()
+            if not e.startswith(":")   # skip junction-internal edges
+        }
         if not counts:
             raise ValueError("no vehicles currently in simulation")
         return max(counts, key=counts.get)
