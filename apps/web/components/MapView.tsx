@@ -4,7 +4,7 @@ import Map, { MapRef, useControl } from "react-map-gl/mapbox";
 import { MapboxOverlay } from "@deck.gl/mapbox";
 import type { Layer } from "@deck.gl/core";
 import "mapbox-gl/dist/mapbox-gl.css";
-import { buildVehicleLayer } from "../lib/layers";
+import { buildIncidentLayer, buildVehicleLayer } from "../lib/layers";
 import { useSimulationStore } from "../lib/store";
 import { interpolateVehicles } from "../lib/interpolation";
 import type { VehicleState } from "../lib/types";
@@ -43,6 +43,7 @@ export interface MapViewProps {
 export default function MapView({ mapboxToken, flyToTarget }: MapViewProps) {
   const mapRef = useRef<MapRef | null>(null);
   const [displayedVehicles, setDisplayedVehicles] = useState<VehicleState[]>([]);
+  const incidents = useSimulationStore((s) => s.incidents);
 
   useEffect(() => {
     let rafId: number;
@@ -78,7 +79,10 @@ export default function MapView({ mapboxToken, flyToTarget }: MapViewProps) {
       initialViewState={SOMA_VIEW}
       mapStyle="mapbox://styles/mapbox/dark-v11"
     >
-      <DeckGLOverlay layers={[buildVehicleLayer(displayedVehicles)]} />
+      {/* Incident layer last so its markers draw above the vehicle dots. */}
+      <DeckGLOverlay
+        layers={[buildVehicleLayer(displayedVehicles), buildIncidentLayer(incidents)]}
+      />
     </Map>
   );
 }

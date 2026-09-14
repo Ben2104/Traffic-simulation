@@ -9,6 +9,18 @@ interface SimulationState {
   connectionStatus: "connecting" | "open" | "closed" | "error";
   errorMessage: string | null;
   handleMessage: (message: ServerMessage) => void;
+  /**
+   * Replace the incident list wholesale. Used to seed the feed from
+   * `GET /incidents` on mount, so an incident created before the browser was
+   * open (or before a refresh / WS reconnect) is still clickable.
+   *
+   * The store's ordering contract is newest-first, the same order
+   * `incident.created` maintains by prepending. Callers are responsible for
+   * handing over an already-newest-first array; the API returns
+   * store-insertion order (oldest first), so its response must be inverted
+   * before it gets here.
+   */
+  setIncidents: (incidents: Incident[]) => void;
   setConnectionStatus: (status: SimulationState["connectionStatus"]) => void;
 }
 
@@ -37,5 +49,6 @@ export const useSimulationStore = create<SimulationState>((set, get) => ({
         break;
     }
   },
+  setIncidents: (incidents) => set({ incidents }),
   setConnectionStatus: (status) => set({ connectionStatus: status }),
 }));

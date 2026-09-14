@@ -1,5 +1,5 @@
 import React, { act } from "react";
-import { render, screen, fireEvent, cleanup } from "@testing-library/react";
+import { render, screen, fireEvent, cleanup, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { useSimulationStore } from "../lib/store";
 
@@ -47,8 +47,30 @@ vi.mock("../lib/ws-client", () => ({
 // (and MapView) are evaluated.
 const { default: DashboardPage } = await import("../app/page");
 
+// The page seeds its incident feed from GET /incidents on mount. Stub fetch
+// for every test in this file so none of them touch the network; individual
+// tests override the resolved payload.
+function stubFetch(payload: unknown[] | Error) {
+  const mock = vi.fn(async () => {
+    if (payload instanceof Error) throw payload;
+    return { ok: true, json: async () => payload } as Response;
+  });
+  vi.stubGlobal("fetch", mock);
+  return mock;
+}
+
+const apiIncident = (id: string, createdAt: string) => ({
+  id,
+  kind: "collision",
+  severity: "HIGH",
+  location: { lat: 37.78, lng: -122.4, edge_id: "XY" },
+  vehicles_involved: ["car-1"],
+  created_at: createdAt,
+});
+
 describe("DashboardPage", () => {
   beforeEach(() => {
+    stubFetch([]);
     mapViewMock.calls.length = 0;
     mapViewMock.mountCount = 0;
     wsClientMock.connect.mockClear();
@@ -64,6 +86,79 @@ describe("DashboardPage", () => {
 
   afterEach(() => {
     cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  it("seeds the incident feed from GET /incidents on mount, newest first", async () => {
+    // GET /incidents returns store-insertion order (oldest first); the feed
+    // contract is newest-first, so the page must invert the response.
+    const fetchMock = stubFetch([
+      apiIncident("INC-1001", "2026-09-13T12:00:00Z"),
+      apiIncident("INC-1002", "2026-09-13T12:05:00Z"),
+    ]);
+
+    render(<DashboardPage />);
+
+    expect(fetchMock).toHaveBeenCalledWith("http://localhost:8000/incidents");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("incident-INC-1002")).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("incident-INC-1001")).toBeInTheDocument();
+    expect(useSimulationStore.getState().incidents.map((i) => i.id)).toEqual([
+      "INC-1002",
+      "INC-1001",
+    ]);
+
+    // And a fetched incident is immediately clickable -- the whole point of
+    // the seed is that the flyTo beat works after a refresh.
+    fireEvent.click(screen.getByTestId("incident-INC-1002"));
+    const lastCall = mapViewMock.calls[mapViewMock.calls.length - 1];
+    expect(lastCall.flyToTarget).toEqual({ lat: 37.78, lng: -122.4, edge_id: "XY" });
+  });
+
+  it("does not crash or show an error banner when GET /incidents fails", async () => {
+    stubFetch(new Error("connection refused"));
+
+    render(<DashboardPage />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("incident-feed")).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId("error-banner")).not.toBeInTheDocument();
+    expect(useSimulationStore.getState().incidents).toEqual([]);
+  });
+
+  it("does not clobber an incident the live stream delivered while the fetch was in flight", async () => {
+    let resolveFetch: (value: unknown) => void = () => {};
+    const pending = new Promise((resolve) => {
+      resolveFetch = resolve;
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        await pending;
+        return { ok: true, json: async () => [apiIncident("INC-1001", "2026-09-13T12:00:00Z")] } as Response;
+      })
+    );
+
+    render(<DashboardPage />);
+
+    act(() => {
+      useSimulationStore.getState().handleMessage({
+        type: "incident.created",
+        incident: apiIncident("INC-2001", "2026-09-13T13:00:00Z"),
+      });
+    });
+
+    await act(async () => {
+      resolveFetch(undefined);
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(useSimulationStore.getState().incidents.map((i) => i.id)).toEqual(["INC-2001"]);
+    });
   });
 
   it("renders the three-pane layout", () => {

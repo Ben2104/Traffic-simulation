@@ -1,36 +1,42 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Dispatch dashboard (`apps/web`)
 
-## Getting Started
+Next.js front end for the 911 Emergency Dispatch Digital Twin. It opens a
+WebSocket to the FastAPI backend (`apps/api`), renders live SUMO vehicle
+positions over a Mapbox basemap with deck.gl, and lets the operator click an
+incident ticket to fly the camera to the accident while background traffic
+keeps moving.
 
-First, run the development server:
+See the repo-root `README.md` for the full demo loop and Docker instructions.
+
+## Layout
+
+- `app/page.tsx` — three-pane dashboard (feed / map / detail), owns the WS
+  connection and the mount-time `GET /incidents` seed.
+- `components/MapView.tsx` — `react-map-gl` map with a `MapboxOverlay`
+  hosting the deck.gl vehicle and incident layers.
+- `lib/store.ts` — Zustand store fed by the three WS message types
+  (`simulation.vehicles`, `incident.created`, `simulation.error`).
+- `lib/interpolation.ts` — smooths vehicle motion between ~250 ms ticks.
+- `lib/layers.ts` — pure deck.gl layer builders.
+- `lib/ws-client.ts` — WebSocket connection with reconnect backoff.
+
+## Local development
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
+echo 'NEXT_PUBLIC_MAPBOX_TOKEN=pk.your_token' > .env.local   # or export it
+npm run dev        # http://localhost:3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+The backend must be running on `http://localhost:8000` for vehicles and
+incidents to appear. Without a Mapbox token the basemap renders blank; the
+deck.gl layers still draw.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Commands
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```bash
+npm test           # Vitest + React Testing Library
+npx tsc --noEmit   # type check
+npm run lint
+npm run build      # production build (inlines NEXT_PUBLIC_* at build time)
+```

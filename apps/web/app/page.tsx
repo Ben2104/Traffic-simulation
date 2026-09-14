@@ -10,6 +10,7 @@ import type { Incident } from "../lib/types";
 
 export default function DashboardPage() {
   const handleMessage = useSimulationStore((s) => s.handleMessage);
+  const setIncidents = useSimulationStore((s) => s.setIncidents);
   const setConnectionStatus = useSimulationStore((s) => s.setConnectionStatus);
   const errorMessage = useSimulationStore((s) => s.errorMessage);
   const [selectedIncident, setSelectedIncident] = useState<Incident | null>(null);
@@ -38,6 +39,43 @@ export default function DashboardPage() {
     });
     return disconnect;
   }, [handleMessage, setConnectionStatus]);
+
+  useEffect(() => {
+    // Without this the feed is WS-only: an incident triggered before the
+    // browser was open -- or before a refresh, or before a WS reconnect --
+    // is invisible, and the click-to-flyTo beat is unreachable with no
+    // recovery short of triggering another collision.
+    //
+    // Same hardcoded host as the WebSocket URL above (no env-var indirection
+    // in this slice); port 8000 is published by docker compose too.
+    //
+    // GET /incidents returns store-insertion order (oldest first) while the
+    // store is newest-first, so the response is inverted rather than sorted
+    // on created_at: inverting matches the server's actual contract exactly,
+    // whereas Date parsing truncates Python's microseconds to milliseconds
+    // and would order two near-simultaneous incidents arbitrarily.
+    let cancelled = false;
+    fetch("http://localhost:8000/incidents")
+      .then((response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.json();
+      })
+      .then((data: Incident[]) => {
+        if (cancelled || !Array.isArray(data) || data.length === 0) return;
+        // Seed only; never clobber anything the live stream already
+        // delivered while this request was in flight.
+        if (useSimulationStore.getState().incidents.length > 0) return;
+        setIncidents([...data].reverse());
+      })
+      .catch(() => {
+        // The API may simply not be up yet. The WS stream still populates
+        // the feed as incidents occur, so this stays silent on purpose --
+        // no banner, no crash.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [setIncidents]);
 
   return (
     <div className="grid grid-cols-[280px_1fr_320px] h-screen">

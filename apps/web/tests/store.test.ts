@@ -69,6 +69,39 @@ describe("useSimulationStore", () => {
     expect(state.incidents).toEqual([incidentB, incidentA]);
   });
 
+  it("replaces the incident list via setIncidents", () => {
+    useSimulationStore.getState().setIncidents([incidentB, incidentA]);
+    expect(useSimulationStore.getState().incidents).toEqual([incidentB, incidentA]);
+
+    useSimulationStore.getState().setIncidents([]);
+    expect(useSimulationStore.getState().incidents).toEqual([]);
+  });
+
+  it("keeps the newest-first invariant after setIncidents seeds the feed", () => {
+    // Feed seeded from GET /incidents (already inverted by the caller to
+    // newest-first); a later live incident must still land at the front.
+    useSimulationStore.getState().setIncidents([incidentB, incidentA]);
+
+    const incidentC: Incident = {
+      ...incidentA,
+      id: "INC-1044",
+      created_at: "2026-09-13T12:10:00Z",
+    };
+    useSimulationStore.getState().handleMessage({ type: "incident.created", incident: incidentC });
+
+    expect(useSimulationStore.getState().incidents).toEqual([incidentC, incidentB, incidentA]);
+  });
+
+  it("does not disturb other state when setting incidents", () => {
+    useSimulationStore.setState({ vehicles: [vehicleA], errorMessage: "boom" });
+
+    useSimulationStore.getState().setIncidents([incidentA]);
+
+    const state = useSimulationStore.getState();
+    expect(state.vehicles).toEqual([vehicleA]);
+    expect(state.errorMessage).toBe("boom");
+  });
+
   it("sets errorMessage without clearing vehicles on simulation.error", () => {
     useSimulationStore.setState({ vehicles: [vehicleA] });
 
