@@ -57,7 +57,11 @@ class SimulationRunner:
         try:
             traci.switch(self._label)
             traci.simulationStep()
-        except traci.TraCIException as exc:
+        # FatalTraCIError is a *sibling* of TraCIException (both subclass
+        # Exception directly), not a subclass, so catching TraCIException
+        # alone lets "Connection closed by SUMO." escape every downstream
+        # error boundary. Both must be listed explicitly.
+        except (traci.TraCIException, traci.FatalTraCIError) as exc:
             raise SimulationError(str(exc)) from exc
 
     def get_vehicle_states(self) -> list[VehicleState]:
@@ -77,7 +81,8 @@ class SimulationRunner:
                     )
                 )
             return states
-        except traci.TraCIException as exc:
+        # See step(): FatalTraCIError is not a subclass of TraCIException.
+        except (traci.TraCIException, traci.FatalTraCIError) as exc:
             raise SimulationError(str(exc)) from exc
 
     def trigger_collision(self, edge_id: str) -> CollisionResult:

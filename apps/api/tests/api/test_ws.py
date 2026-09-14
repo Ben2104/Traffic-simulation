@@ -1,8 +1,24 @@
+import os
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.api.ws import ConnectionManager, manager, router
+from app.config import get_settings
+from app.main import app as real_app
+from app.simulation.models import VehicleState
+
+FIXTURES_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(__file__)), "simulation", "fixtures"
+)
+
+
+@pytest.fixture(autouse=True)
+def _clear_settings_cache():
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
 
 
 @pytest.fixture
@@ -41,3 +57,76 @@ async def test_broadcast_removes_stale_connections_and_delivers_to_healthy_ones(
 
     assert healthy.sent == [{"type": "simulation.error", "message": "hi"}]
     assert mgr.connection_count == 1
+
+
+ALLOWED_MESSAGE_TYPES = {"simulation.vehicles", "incident.created", "simulation.error"}
+
+
+def _receive_until(websocket, message_type: str, limit: int = 80) -> dict:
+    """Read frames until one of `message_type` arrives, bounded so a broken
+    contract fails fast instead of hanging the suite forever."""
+    seen: list[str] = []
+    for _ in range(limit):
+        frame = websocket.receive_json()
+        assert frame["type"] in ALLOWED_MESSAGE_TYPES, (
+            f"unexpected WS message type {frame['type']!r} "
+            f"(this slice ships exactly {sorted(ALLOWED_MESSAGE_TYPES)})"
+        )
+        seen.append(frame["type"])
+        if frame["type"] != message_type:
+            continue
+        if message_type == "simulation.vehicles" and not frame["vehicles"]:
+            continue  # sim hasn't spawned any vehicles yet
+        return frame
+    raise AssertionError(
+        f"no {message_type!r} frame after {limit} messages; saw {seen}"
+    )
+
+
+def test_ws_simulation_streams_pydantic_valid_vehicle_frames_and_incident_created(
+    monkeypatch,
+):
+    """End-to-end WS contract test the spec promises (spec:167-168).
+
+    Runs the *real* app against the fixture SUMO network and reads frames off
+    the real `/ws/simulation` route, so the whole path (tick loop ->
+    ConnectionManager -> socket) is exercised, not just its pieces. Also pins
+    `incident.created.created_at` as a JSON string: `frames.py` uses
+    `model_dump(mode="json")` there and a plain `model_dump()` for vehicles,
+    and only the former keeps the TypeScript `Incident.created_at: string`
+    contract honest.
+    """
+    monkeypatch.setenv(
+        "SIM_SUMO_NET_FILE", os.path.join(FIXTURES_DIR, "fixture.net.xml")
+    )
+    monkeypatch.setenv(
+        "SIM_SUMO_ROUTE_FILE", os.path.join(FIXTURES_DIR, "fixture.rou.xml")
+    )
+
+    with TestClient(real_app) as client:
+        with client.websocket_connect("/ws/simulation") as websocket:
+            frame = _receive_until(websocket, "simulation.vehicles")
+
+            assert isinstance(frame["tick"], int)
+            assert frame["vehicles"]
+            for entry in frame["vehicles"]:
+                vehicle = VehicleState.model_validate(entry)
+                assert isinstance(vehicle.id, str)
+                assert isinstance(vehicle.lat, float)
+                assert isinstance(vehicle.lng, float)
+
+            response = client.post("/demo/trigger-collision")
+            assert response.status_code == 200, response.text
+            incident_id = response.json()["incident_id"]
+
+            incident_frame = _receive_until(websocket, "incident.created")
+
+    incident = incident_frame["incident"]
+    assert incident["id"] == incident_id
+    assert incident["kind"] == "collision"
+    assert incident["severity"] == "HIGH"
+    assert set(incident["location"]) == {"lat", "lng", "edge_id"}
+    assert isinstance(incident["vehicles_involved"], list)
+    # The one cross-language type that can silently break the frontend's
+    # `Incident.created_at: string` if frames.py ever drops mode="json".
+    assert isinstance(incident["created_at"], str)

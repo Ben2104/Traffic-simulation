@@ -17,7 +17,11 @@ class TriggerCollisionRequest(BaseModel):
 
 @router.post("/demo/trigger-collision")
 async def trigger_collision(
-    body: TriggerCollisionRequest,
+    # Defaulted so the request body is genuinely optional: the spec says the
+    # server picks a busy edge when `edge_id` is omitted, and `curl -X POST
+    # .../demo/trigger-collision` with no body at all must work (without a
+    # default FastAPI rejects it with 422).
+    body: TriggerCollisionRequest = TriggerCollisionRequest(),
     runner: SimulationRunner = Depends(get_runner),
     store: IncidentStore = Depends(get_store),
 ):

@@ -1,4 +1,8 @@
 import os
+import signal
+import subprocess
+import time
+
 import pytest
 import traci
 
@@ -8,6 +12,35 @@ from app.simulation.runner import SimulationRunner
 FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
 FIXTURE_NET = os.path.join(FIXTURES_DIR, "fixture.net.xml")
 FIXTURE_ROUTE = os.path.join(FIXTURES_DIR, "fixture.rou.xml")
+
+
+def _kill_sumo_server(runner: SimulationRunner) -> None:
+    """SIGKILL the SUMO server behind `runner`'s TraCI connection.
+
+    The pip-installed `sumo` entry point is a small Python wrapper that execs
+    the real SUMO binary as a *child*, so killing only the process traci
+    spawned leaves the actual server running and the socket healthy. Kill the
+    whole tree: descendants first, then the process traci owns.
+    """
+    process = traci.connection.get(runner._label)._process
+
+    def descendants(pid: int) -> list[int]:
+        found = subprocess.run(
+            ["pgrep", "-P", str(pid)], capture_output=True, text=True
+        ).stdout.split()
+        out: list[int] = []
+        for child in found:
+            out.extend(descendants(int(child)))
+            out.append(int(child))
+        return out
+
+    for pid in descendants(process.pid):
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    process.kill()
+    process.wait()
 
 
 @pytest.fixture
@@ -58,6 +91,38 @@ def test_step_raises_simulation_error_after_connection_is_closed(runner):
     runner.stop()
     with pytest.raises(SimulationError):
         runner.step()
+
+
+def test_step_raises_simulation_error_when_the_sumo_process_dies(runner):
+    # The real-world failure this guards: SUMO crashes/is killed mid-run and
+    # traci raises FatalTraCIError("Connection closed by SUMO."), which is a
+    # *sibling* of TraCIException, not a subclass. If step() only catches
+    # TraCIException the fatal error escapes SimulationError entirely and
+    # kills the tick loop. No mocking: the actual subprocess is SIGKILLed.
+    for _ in range(3):
+        runner.step()
+
+    _kill_sumo_server(runner)
+
+    with pytest.raises(SimulationError):
+        # Stepping repeatedly rather than once removes any dependency on how
+        # fast the OS tears the socket down; if the translation is missing,
+        # the raw FatalTraCIError escapes and fails this test instead.
+        for _ in range(20):
+            runner.step()
+            time.sleep(0.05)
+
+
+def test_get_vehicle_states_raises_simulation_error_when_the_sumo_process_dies(runner):
+    for _ in range(3):
+        runner.step()
+
+    _kill_sumo_server(runner)
+
+    with pytest.raises(SimulationError):
+        for _ in range(20):
+            runner.get_vehicle_states()
+            time.sleep(0.05)
 
 
 def test_trigger_collision_stops_vehicles_on_the_target_edge(runner):

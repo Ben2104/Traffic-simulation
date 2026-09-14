@@ -56,6 +56,16 @@ def test_trigger_collision_creates_incident_and_returns_id(client):
     assert response.json()["incident_id"].startswith("INC-")
 
 
+def test_trigger_collision_works_with_no_request_body_at_all(client):
+    # The demo `curl -X POST .../demo/trigger-collision` sends no body and no
+    # Content-Type. Every other test here passes `json={}`, which masked a
+    # 422 on the one invocation a presenter actually types.
+    response = client.post("/demo/trigger-collision")
+    assert response.status_code == 200, response.text
+    assert response.json()["incident_id"].startswith("INC-")
+    assert deps.deps.runner.triggered_edge == "AB"  # server picked a busy edge
+
+
 def test_trigger_collision_with_explicit_edge_uses_it(client):
     response = client.post("/demo/trigger-collision", json={"edge_id": "BC"})
     assert response.status_code == 200
