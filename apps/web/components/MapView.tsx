@@ -64,6 +64,13 @@ export default function MapView({ mapboxToken, flyToTarget }: MapViewProps) {
   const [displayedVehicles, setDisplayedVehicles] = useState<VehicleState[]>([]);
   const [style, dispatch] = useReducer(mapStyleReducer, INITIAL_MAP_STYLE);
   const [buildingsDisabled, setBuildingsDisabled] = useState(false);
+  // The underlying mapbox-gl instance is created asynchronously (react-map-gl
+  // imports mapbox-gl lazily), so `mapRef.current` is still null on the first
+  // commit. `onLoad` fires once that instance exists AND its initial style
+  // has finished loading, which is the earliest point `mapRef.current?.getMap()`
+  // is usable -- gating the style-wiring effect on it (rather than polling or
+  // a ref callback) is what makes that effect ever run at all.
+  const [mapReady, setMapReady] = useState(false);
 
   const incidents = useSimulationStore((s) => s.incidents);
   const signals = useSimulationStore((s) => s.signals);
@@ -192,24 +199,34 @@ export default function MapView({ mapboxToken, flyToTarget }: MapViewProps) {
     // this handler is the ONLY path that adds these sources and layers --
     // toggling merely changes state and re-runs the same function.
     map.on("style.load", applyStyle);
+    // Eager, deliberate: by the time `mapReady` flips (onLoad fired), the
+    // initial style has already finished loading, so this call is what
+    // actually applies the very first plan -- the "style.load" handler above
+    // only covers basemap switches from here on.
     applyStyle();
     return () => {
       map.off("style.load", applyStyle);
     };
-  }, [applyStyle]);
+  }, [applyStyle, mapReady]);
 
   return (
     <>
       <MapControls
         state={style}
         dispatch={dispatch}
-        buildingsDisabled={buildingsDisabled}
+        // The toggle is always valid on Standard -- it owns its own buildings
+        // via setConfigProperty and never runs addExtrusionLayer at all, so
+        // `buildingsDisabled` (a leftover from a *previous* satellite visit)
+        // must never leak into that branch. Structural, not another flag to
+        // track: the only basemap that can withdraw the toggle is satellite.
+        buildingsDisabled={style.basemap === "satellite" && buildingsDisabled}
       />
       <Map
         ref={mapRef}
         mapboxAccessToken={mapboxToken}
         initialViewState={DEFAULT_VIEW_STATE}
         mapStyle={STYLE_URL[style.basemap]}
+        onLoad={() => setMapReady(true)}
       >
         {/* Signals first (ground furniture), then vehicles, then incidents on
             top so the demo's climax is never occluded by traffic. */}
