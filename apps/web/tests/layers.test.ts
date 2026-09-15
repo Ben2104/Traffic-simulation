@@ -50,6 +50,15 @@ describe("buildIncidentLayer", () => {
   });
 });
 
+// buildVehicleIconLayer's return type is the deliberate union
+// `IconLayer<VehicleState> | ScatterplotLayer<VehicleState>` -- that union is
+// what lets the jsdom/SSR fallback share this call site with the icon path.
+// Four of the assertions below therefore cast `layer.props` at the access
+// point (rather than casting the individual property, which TS rejects
+// before the cast is even applied, since the property doesn't exist on the
+// scatterplot half of the union). Test-side-only amendment, coordinator-
+// authorized, to keep `tsc --noEmit` clean without touching the production
+// return type.
 describe("buildVehicleIconLayer", () => {
   const vehicle: VehicleState = {
     id: "veh42",
@@ -85,7 +94,7 @@ describe("buildVehicleIconLayer", () => {
     // is counter-clockwise. Getting this wrong points every car the wrong way
     // in a manner that still looks plausible in a screenshot.
     const layer = buildVehicleIconLayer([vehicle], fakeAtlas);
-    const getAngle = layer.props.getAngle as (v: VehicleState) => number;
+    const { getAngle } = layer.props as { getAngle: (v: VehicleState) => number };
     expect(getAngle(vehicle)).toBe(-90);
     expect(getAngle({ ...vehicle, heading: 217 })).toBe(-217);
   });
@@ -98,15 +107,19 @@ describe("buildVehicleIconLayer", () => {
 
   it("selects the icon by the vehicle's stable sprite key", () => {
     const layer = buildVehicleIconLayer([vehicle], fakeAtlas);
-    const getIcon = layer.props.getIcon as (v: VehicleState) => string;
+    const { getIcon } = layer.props as { getIcon: (v: VehicleState) => string };
     expect(getIcon(vehicle)).toBe(spriteKeyForVehicle("veh42", "civilian"));
   });
 
   it("sizes icons in metres with a pixel floor so they survive zooming out", () => {
     // A real 4.5m car is about 2px at z15. Without the floor, vehicles vanish.
     const layer = buildVehicleIconLayer([vehicle], fakeAtlas);
-    expect(layer.props.sizeUnits).toBe("meters");
-    expect(layer.props.sizeMinPixels).toBe(14);
+    const { sizeUnits, sizeMinPixels } = layer.props as {
+      sizeUnits: string;
+      sizeMinPixels: number;
+    };
+    expect(sizeUnits).toBe("meters");
+    expect(sizeMinPixels).toBe(14);
   });
 
   it("lays icons flat on the ground plane rather than billboarding", () => {

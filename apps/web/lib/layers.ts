@@ -55,8 +55,10 @@ export function buildVehicleIconLayer(
     // deck.gl's IconLayer typings only declare `iconAtlas?: string | Texture`,
     // but its runtime "image" prop pipeline (createTexture in
     // @deck.gl/core/lifecycle/prop-types) accepts an HTMLCanvasElement
-    // directly and uploads it as a texture -- this cast bridges that typing
-    // gap without changing the (correct) runtime value.
+    // directly and uploads it as a texture. deck.gl's own types are narrower
+    // than its runtime here -- this cast bridges that gap without changing
+    // the (correct) runtime value. Do NOT "fix" this by converting the
+    // canvas to a real Texture; there is nothing to fix.
     iconAtlas: sprites.canvas as unknown as Texture,
     iconMapping: sprites.mapping,
     getIcon: (v: VehicleState) => spriteKeyForVehicle(v.id, v.kind),
