@@ -69,6 +69,48 @@ def test_vehicles_that_leave_drop_out_of_the_results(runner):
     assert not departed & {s.id for s in runner.get_vehicle_states()}
 
 
+def test_step_unsubscribes_a_vehicle_no_longer_in_getIDList_even_without_an_arrival_event(
+    runner, monkeypatch
+):
+    # Confirmed empirically against the live soma network (see
+    # task-14-fix-report.md): a vehicle can drop out of
+    # traci.vehicle.getIDList() and still sit in
+    # traci.vehicle.getAllSubscriptionResults() holding TraCI's
+    # INVALID_DOUBLE_VALUE sentinel for 30+ consecutive ticks with no
+    # matching id ever appearing in traci.simulation.getArrivedIDList() --
+    # SUMO does not route every kind of vehicle removal through that list.
+    # step() must therefore reconcile the subscription cache against
+    # getIDList() directly rather than relying on getArrivedIDList() alone,
+    # or the leaked entry (and the non-finite lat/lng it produces downstream)
+    # never gets cleaned up. Proven here by stubbing getIDList() to report a
+    # vehicle gone while getArrivedIDList() simultaneously insists nothing
+    # arrived -- if step() only listened to the arrival list, this vehicle
+    # would never be unsubscribed.
+    for _ in range(STEPS_TO_LET_TRAFFIC_BUILD):
+        runner.step()
+    traci.switch(runner.label)
+    veh_id = traci.vehicle.getIDList()[0]
+
+    real_get_id_list = traci.vehicle.getIDList
+    monkeypatch.setattr(
+        traci.vehicle,
+        "getIDList",
+        lambda: tuple(v for v in real_get_id_list() if v != veh_id),
+    )
+    monkeypatch.setattr(traci.simulation, "getArrivedIDList", lambda: [])
+
+    # Subscribed variables ride along on the *next* simulationStep() response
+    # rather than being fetched on demand, so the unsubscribe() this step()
+    # call issues only takes effect in the subscription payload of the
+    # following step -- the first call still shows veh_id (it was already in
+    # the response cached before unsubscribe() was sent), and only the
+    # second confirms the server actually stopped sending it.
+    runner.step()
+    runner.step()
+
+    assert veh_id not in traci.vehicle.getAllSubscriptionResults()
+
+
 def test_step_skips_a_vehicle_that_is_no_longer_known_when_subscribed(runner, monkeypatch):
     # Pins the fix for a vehicle that departs and arrives within the same
     # step: by the time step() gets around to subscribing it, SUMO no

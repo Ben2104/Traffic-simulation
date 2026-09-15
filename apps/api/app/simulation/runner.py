@@ -1,3 +1,5 @@
+import logging
+import math
 import uuid
 
 import traci
@@ -7,6 +9,8 @@ from .errors import SimulationError
 from .geo import NetworkProjection
 from .models import VehicleState, CollisionResult, TrafficLightApproach
 from .traffic_lights import group_links_by_incoming_lane, stop_line_heading
+
+log = logging.getLogger(__name__)
 
 # Subscribed once per vehicle, then read in a single getAllSubscriptionResults()
 # call per tick. The previous implementation issued four TraCI round-trips per
@@ -94,6 +98,30 @@ class SimulationRunner:
                     # SimulationError and mark_failed() the runner permanently,
                     # killing all traffic over one vanished vehicle.
                     continue
+
+            # Unsubscribe vehicles that have left the network, mirroring the
+            # subscribe-on-departed loop above. traci.simulation.getArrivedIDList()
+            # alone is NOT sufficient for this: confirmed empirically against
+            # the live soma network (see task-14-fix-report.md) that a vehicle
+            # can drop out of traci.vehicle.getIDList() and sit in
+            # getAllSubscriptionResults() holding the INVALID_DOUBLE_VALUE
+            # sentinel for 30+ consecutive ticks with no matching entry ever
+            # appearing in getArrivedIDList() -- SUMO does not route every
+            # kind of vehicle removal through that list. Reconciling the
+            # subscription cache against the live fleet directly, every tick,
+            # is what actually closes the leak: any id SUMO is still
+            # reporting a subscription result for, but that is no longer in
+            # getIDList(), is stale and is dropped here rather than left to
+            # accumulate (and rather than trusted to eventually self-clear).
+            live_ids = set(traci.vehicle.getIDList())
+            stale_ids = set(traci.vehicle.getAllSubscriptionResults().keys()) - live_ids
+            for veh_id in stale_ids:
+                try:
+                    traci.vehicle.unsubscribe(veh_id)
+                except traci.TraCIException:
+                    # Already gone from the server's subscription table too;
+                    # nothing left to clean up.
+                    continue
         # FatalTraCIError is a *sibling* of TraCIException (both subclass
         # Exception directly), not a subclass, so catching TraCIException
         # alone lets "Connection closed by SUMO." escape every downstream
@@ -117,14 +145,36 @@ class SimulationRunner:
                 if tc.VAR_POSITION not in values:
                     continue
                 x, y = values[tc.VAR_POSITION]
+                heading = values[tc.VAR_ANGLE]
+                speed = values[tc.VAR_SPEED]
+                # TraCI reports its INVALID_DOUBLE_VALUE sentinel (-2**30) for
+                # a subscribed variable it cannot currently supply -- observed
+                # in production for vehicles whose subscription result never
+                # recovers a real value on any later tick (see
+                # task-14-fix-report.md). A sentinel position sits far outside
+                # NetworkProjection's coordinate domain, so to_lon_lat() maps
+                # it to +-inf. Starlette's WebSocket.send_json serialises with
+                # allow_nan=True by default, so an inf lat/lng (or a bare
+                # sentinel heading/speed) is written as a literal `Infinity`
+                # token -- not valid JSON -- and the browser's JSON.parse
+                # throws on the WHOLE frame over this one vehicle. Drop it
+                # here rather than forward a non-finite value.
+                if tc.INVALID_DOUBLE_VALUE in (x, y, heading, speed):
+                    continue
                 lon, lat = self._projection.to_lon_lat(x, y)
+                # Belt-and-braces beyond the sentinel check above: any other
+                # cause of a non-finite projected coordinate (e.g. a future
+                # network/projection edge case) must not reach the client
+                # either, for the same JSON.parse reason.
+                if not (math.isfinite(lat) and math.isfinite(lon)):
+                    continue
                 states.append(
                     VehicleState(
                         id=veh_id,
                         lat=lat,
                         lng=lon,
-                        heading=values[tc.VAR_ANGLE],
-                        speed=values[tc.VAR_SPEED],
+                        heading=heading,
+                        speed=speed,
                     )
                 )
             return states

@@ -1,3 +1,4 @@
+import math
 import os
 import signal
 import subprocess
@@ -5,6 +6,7 @@ import time
 
 import pytest
 import traci
+import traci.constants as tc
 
 from app.simulation.errors import SimulationError
 from app.simulation.runner import SimulationRunner
@@ -64,6 +66,46 @@ def test_vehicles_depart_and_report_positions_after_stepping(runner):
     for v in states:
         assert isinstance(v.lat, float)
         assert isinstance(v.lng, float)
+
+
+def test_get_vehicle_states_drops_a_vehicle_reporting_the_invalid_double_sentinel(
+    runner, monkeypatch
+):
+    # TraCI reports its INVALID_DOUBLE_VALUE sentinel (-2**30, i.e.
+    # tc.INVALID_DOUBLE_VALUE) for a subscribed variable it cannot currently
+    # supply. A sentinel *position* sits far outside NetworkProjection's
+    # domain, so to_lon_lat() maps it to +-inf. Starlette's WebSocket.send_json
+    # serialises with allow_nan=True by default, so an inf lat/lng (or a raw
+    # sentinel heading/speed) is written as a bare `Infinity` token -- not
+    # valid JSON. The browser's JSON.parse then throws on the WHOLE frame,
+    # discarding every other vehicle, every signal, and every incident in it
+    # over this one entry. A vehicle carrying the sentinel in any subscribed
+    # field must therefore be dropped entirely, never forwarded with a
+    # non-finite value.
+    runner.step()
+    traci.switch(runner._label)
+    real_results = traci.vehicle.getAllSubscriptionResults()
+
+    def fake_results():
+        return {
+            **real_results,
+            "ghost": {
+                tc.VAR_POSITION: (tc.INVALID_DOUBLE_VALUE, tc.INVALID_DOUBLE_VALUE),
+                tc.VAR_ANGLE: tc.INVALID_DOUBLE_VALUE,
+                tc.VAR_SPEED: tc.INVALID_DOUBLE_VALUE,
+            },
+        }
+
+    monkeypatch.setattr(traci.vehicle, "getAllSubscriptionResults", fake_results)
+
+    states = runner.get_vehicle_states()
+
+    assert "ghost" not in {s.id for s in states}
+    for state in states:
+        assert math.isfinite(state.lat)
+        assert math.isfinite(state.lng)
+        assert math.isfinite(state.heading)
+        assert math.isfinite(state.speed)
 
 
 def test_stop_after_mark_failed_still_closes_the_traci_connection(runner):
