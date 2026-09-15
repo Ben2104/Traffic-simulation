@@ -30,6 +30,56 @@ docker compose up
 
 `docker compose down` when you're finished.
 
+## Map controls
+
+The panel in the top-right corner of the map controls how the basemap is
+drawn. Nothing in it touches the simulation — it is purely how the world is
+rendered.
+
+**Basemap** (radio, pick one):
+
+| Option | Style | Notes |
+| --- | --- | --- |
+| Standard | `mapbox://styles/mapbox/standard` | Default. Draws lane markings, crosswalks, turn arrows and 3D trees from about z16. |
+| Satellite | `mapbox://styles/mapbox/satellite-streets-v12` | Classic style: imagery plus road labels. |
+
+**Layers** (independent toggles):
+
+- **3D Buildings** — on by default. The two basemaps implement this in
+  completely different ways: Standard owns its buildings, so the toggle sets
+  the `show3dObjects` style config property; `satellite-streets-v12` has no
+  config properties, so the toggle adds or removes a `fill-extrusion` layer
+  built from the `composite` source's `building` layer. The checkbox disables
+  itself if a loaded classic style turns out to carry no building geometry.
+- **Terrain** — off by default. Adds the `mapbox-dem` raster-DEM source and
+  applies it at 1.5× exaggeration. SoMa is close to flat, so the effect is
+  subtle; it is most visible looking south towards Potrero Hill.
+- **Night** — off by default, and only shown on Standard. It switches the
+  style's `lightPreset` between `day` and `night`. Light presets are a
+  Standard-style feature, so the control is withdrawn rather than left inert
+  when Satellite is selected.
+
+`map.setStyle()` destroys every custom source and layer, so switching the
+basemap would otherwise silently drop terrain and the extrusion layer. The
+toggle state is therefore kept in a pure reducer (`apps/web/lib/map-style.ts`)
+that produces a *complete* instruction list — never a delta — which a single
+`style.load` handler in `MapView` replays after every style change.
+
+### Where the traffic lights come from
+
+The coloured posts at intersections are **not** external map data. Mapbox
+publishes no traffic-signal dataset — `mapbox-traffic-v1` carries congestion
+on road lines and nothing else. The signals come from the SUMO network's own
+`tlLogic` programs (51 of them across 112 signalised junctions in the SoMa
+net): the backend reads each junction's controlled links, projects the
+stop-line position of every incoming lane to WGS84, and streams the live
+red/yellow/green state alongside the vehicle positions on each tick. So the
+phases you see are the ones the simulation is actually obeying.
+
+Signal state is cosmetic by design. If the traffic-light read fails, the
+`signals` key is omitted from the frame, the frontend keeps the last known
+phases, and vehicle rendering and the connection banner are unaffected.
+
 ## Local development
 
 Backend:
