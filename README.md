@@ -2,7 +2,8 @@
 
 A live digital twin of SoMa, San Francisco: a SUMO microscopic traffic
 simulation streams vehicle positions over a WebSocket to a Next.js dashboard
-that renders them on a Mapbox/deck.gl map. Triggering a deterministic
+that renders them on a Mapbox map (vehicles as a native Mapbox layer,
+signals and incidents via deck.gl). Triggering a deterministic
 collision blocks a lane, creates an incident ticket, and pushes it to the
 operator's feed; clicking the ticket flies the camera to the accident while
 background traffic keeps moving the whole time. Two services, `api`
@@ -79,6 +80,25 @@ phases you see are the ones the simulation is actually obeying.
 Signal state is cosmetic by design. If the traffic-light read fails, the
 `signals` key is omitted from the frame, the frontend keeps the last known
 phases, and vehicle rendering and the connection banner are unaffected.
+
+### Why vehicles are plain dots, not rotated car icons
+
+deck.gl's `MapboxOverlay` does not render in this stack: `gl.readPixels()`
+called from inside deck's own `onAfterRender` hook reads back a fully
+transparent framebuffer every frame, despite deck's internal metrics
+reporting successful draws (`drawLayersCount`, `framesRedrawn` both healthy)
+and zero WebGL errors. Reproduced identically for `IconLayer` and
+`ScatterplotLayer`, in both `MapboxOverlay` "overlaid" and "interleaved"
+modes. Mapbox's own rendering — including a native `circle` layer fed the
+same coordinates — works correctly throughout, which is why vehicles render
+as a Mapbox GeoJSON source/layer (`apps/web/components/MapView.tsx`) instead.
+The pre-tinted sprite atlas and rotated `IconLayer` (`lib/car-sprites.ts`,
+`buildVehicleIconLayer` in `lib/layers.ts`) are unused as of this fix, kept
+in case the underlying deck.gl defect gets resolved upstream. Signals still
+render through deck.gl's `ColumnLayer` and are suspected to carry the same
+defect — unconfirmed. See
+`docs/superpowers/plans/2026-09-14-3d-map-verification.md` for the full
+investigation.
 
 ## Local development
 
