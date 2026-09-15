@@ -1,11 +1,25 @@
 import { create } from "zustand";
-import type { VehicleState, Incident, ServerMessage } from "./types";
+import type {
+  VehicleState,
+  Incident,
+  ServerMessage,
+  TrafficLightApproach,
+} from "./types";
 
 interface SimulationState {
   vehicles: VehicleState[];
   previousVehicles: VehicleState[];
   lastTickAt: number;
   incidents: Incident[];
+  /**
+   * Current signal phase per TLS id, replaced wholesale each tick. A frame
+   * that omits the key leaves this untouched: a transient backend failure
+   * should show stale signals, not blank every marker to grey.
+   */
+  signals: Record<string, string>;
+  /** Static approach geometry, fetched once from GET /traffic-lights. */
+  approaches: TrafficLightApproach[];
+  setApproaches: (approaches: TrafficLightApproach[]) => void;
   connectionStatus: "connecting" | "open" | "closed" | "error";
   errorMessage: string | null;
   handleMessage: (message: ServerMessage) => void;
@@ -29,6 +43,8 @@ export const useSimulationStore = create<SimulationState>((set, get) => ({
   previousVehicles: [],
   lastTickAt: Date.now(),
   incidents: [],
+  signals: {},
+  approaches: [],
   connectionStatus: "connecting",
   errorMessage: null,
   handleMessage: (message) => {
@@ -39,6 +55,10 @@ export const useSimulationStore = create<SimulationState>((set, get) => ({
           vehicles: message.vehicles,
           lastTickAt: Date.now(),
           errorMessage: null,
+          // Replaced, never merged: the backend sends the complete map every
+          // tick, so merging would resurrect a stale TLS. Left alone entirely
+          // when the key is absent.
+          ...(message.signals ? { signals: message.signals } : {}),
         });
         break;
       case "incident.created":
@@ -50,5 +70,6 @@ export const useSimulationStore = create<SimulationState>((set, get) => ({
     }
   },
   setIncidents: (incidents) => set({ incidents }),
+  setApproaches: (approaches) => set({ approaches }),
   setConnectionStatus: (status) => set({ connectionStatus: status }),
 }));
