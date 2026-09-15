@@ -87,7 +87,15 @@ describe("buildSignalLayer", () => {
     // like "the simulation froze".
     const signals = { "tls-1": "GG" };
     const layer = buildSignalLayer([approach], signals);
-    expect(layer.props.updateTriggers.getFillColor).toEqual([signals]);
+    const { updateTriggers } = layer.props as {
+      updateTriggers: { getFillColor: unknown[] };
+    };
+    const trigger = updateTriggers.getFillColor;
+    expect(trigger).toHaveLength(1);
+    // Reference identity, not deep equality: deck.gl invalidates on object
+    // identity, so a fresh object each render would defeat the trigger while
+    // still satisfying toEqual.
+    expect(trigger[0]).toBe(signals);
   });
 
   it("handles an empty approach list", () => {
