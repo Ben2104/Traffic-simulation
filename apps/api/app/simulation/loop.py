@@ -7,8 +7,20 @@ from ..api.ws import manager
 
 log = logging.getLogger(__name__)
 
+# Logged once per process rather than per tick: a persistent TraCI fault would
+# otherwise emit a stack trace four times a second for the life of the run.
+_signal_failure_logged = False
+
+
+def reset_signal_failure_log() -> None:
+    """Clear the log-once latch. Exists for test isolation."""
+    global _signal_failure_logged
+    _signal_failure_logged = False
+
 
 async def tick_once(runner, tick: int) -> dict:
+    global _signal_failure_logged
+
     if not runner.is_running:
         return error_frame("simulation offline")
     try:
@@ -17,7 +29,23 @@ async def tick_once(runner, tick: int) -> dict:
     except SimulationError as exc:
         runner.mark_failed()
         return error_frame(f"simulation step failed: {exc}")
-    return vehicle_frame(tick, vehicles)
+
+    # Signals are cosmetic and must never be able to stop traffic. Letting an
+    # exception from here reach run_tick_loop's handler would call
+    # mark_failed() permanently, killing the simulation for the rest of the
+    # session over a decorative layer. Degrade the frame instead: the
+    # frontend keeps its previous signal state when the key is absent.
+    signals = None
+    try:
+        signals = runner.get_traffic_light_states()
+    except Exception:
+        if not _signal_failure_logged:
+            log.exception(
+                "traffic light state read failed; frames will omit signals"
+            )
+            _signal_failure_logged = True
+
+    return vehicle_frame(tick, vehicles, signals)
 
 
 async def run_tick_loop(runner, tick_interval: float) -> None:

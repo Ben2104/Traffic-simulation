@@ -10,10 +10,20 @@ from app.simulation.models import VehicleState
 
 
 class _StubRunner:
-    def __init__(self, vehicles=None, raise_on_step=False, running=True, step_error=None):
+    def __init__(
+        self,
+        vehicles=None,
+        raise_on_step=False,
+        running=True,
+        step_error=None,
+        signals=None,
+        signal_error=None,
+    ):
         self._vehicles = vehicles or []
         self._raise_on_step = raise_on_step
         self._step_error = step_error
+        self._signals = {} if signals is None else signals
+        self._signal_error = signal_error
         self.is_running = running
         self.failed = False
 
@@ -26,18 +36,24 @@ class _StubRunner:
     def get_vehicle_states(self):
         return self._vehicles
 
+    def get_traffic_light_states(self):
+        if self._signal_error is not None:
+            raise self._signal_error
+        return self._signals
+
     def mark_failed(self):
         self.failed = True
 
 
 async def test_tick_once_returns_vehicle_frame_on_success():
     vehicles = [VehicleState(id="car-1", lat=1.0, lng=2.0, heading=0.0, speed=0.0)]
-    runner = _StubRunner(vehicles=vehicles)
+    runner = _StubRunner(vehicles=vehicles, signals={"tls-1": "rG"})
     frame = await tick_once(runner, tick=7)
     assert frame == {
         "type": "simulation.vehicles",
         "tick": 7,
         "vehicles": [v.model_dump() for v in vehicles],
+        "signals": {"tls-1": "rG"},
     }
 
 
@@ -121,3 +137,58 @@ async def test_run_tick_loop_broadcasts_vehicle_frames_and_advances_the_tick_cou
     assert all(frame["type"] == "simulation.vehicles" for frame in recorder.frames)
     ticks = [frame["tick"] for frame in recorder.frames]
     assert ticks == list(range(len(ticks)))
+
+
+@pytest.fixture(autouse=True)
+def _reset_signal_log():
+    # The signal-failure warning is logged once per process to avoid spamming
+    # at 4 Hz, so the flag has to be cleared between tests that assert on it.
+    loop_module.reset_signal_failure_log()
+    yield
+    loop_module.reset_signal_failure_log()
+
+
+async def test_tick_once_omits_signals_and_keeps_running_when_the_signal_read_fails():
+    # THE regression test for this slice. loop.py's outer handler calls
+    # mark_failed() permanently on any exception, and the frontend store
+    # auto-clears errorMessage on the next vehicle frame -- sound only while a
+    # failed runner can never emit one. A decorative signal layer must never
+    # be able to trip that. Traffic keeps flowing; the signals key disappears.
+    vehicles = [VehicleState(id="car-1", lat=1.0, lng=2.0, heading=0.0, speed=0.0)]
+    runner = _StubRunner(vehicles=vehicles, signal_error=RuntimeError("tls exploded"))
+
+    frame = await tick_once(runner, tick=4)
+
+    assert frame["type"] == "simulation.vehicles"
+    assert frame["vehicles"] == [v.model_dump() for v in vehicles]
+    assert "signals" not in frame
+    assert runner.failed is False, "a signal read failure killed the simulation"
+
+
+async def test_tick_once_logs_a_signal_failure_only_once(caplog):
+    runner = _StubRunner(signal_error=RuntimeError("tls exploded"))
+    with caplog.at_level(logging.ERROR, logger="app.simulation.loop"):
+        for tick in range(5):
+            await tick_once(runner, tick=tick)
+    signal_records = [r for r in caplog.records if "traffic light" in r.getMessage()]
+    assert len(signal_records) == 1, "signal failures must not log at tick rate"
+
+
+async def test_run_tick_loop_keeps_broadcasting_vehicle_frames_despite_signal_failures(
+    monkeypatch,
+):
+    recorder = _RecordingManager()
+    monkeypatch.setattr(loop_module, "manager", recorder)
+    vehicles = [VehicleState(id="car-1", lat=1.0, lng=2.0, heading=0.0, speed=0.0)]
+    runner = _StubRunner(vehicles=vehicles, signal_error=RuntimeError("tls exploded"))
+
+    task = asyncio.create_task(run_tick_loop(runner, tick_interval=0.01))
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert len(recorder.frames) >= 2
+    assert all(f["type"] == "simulation.vehicles" for f in recorder.frames)
+    ticks = [f["tick"] for f in recorder.frames]
+    assert ticks == list(range(len(ticks))), "tick counter stalled"
