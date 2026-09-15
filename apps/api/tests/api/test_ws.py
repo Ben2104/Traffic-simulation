@@ -1,3 +1,4 @@
+import json
 import os
 
 import pytest
@@ -57,6 +58,48 @@ async def test_broadcast_removes_stale_connections_and_delivers_to_healthy_ones(
 
     assert healthy.sent == [{"type": "simulation.error", "message": "hi"}]
     assert mgr.connection_count == 1
+
+
+async def test_broadcast_drops_frame_entries_containing_a_non_finite_float():
+    # Defence-in-depth at the serialisation boundary, independent of whatever
+    # upstream producer (correctly or not) built the frame. Starlette's
+    # WebSocket.send_json serialises with json.dumps(..., allow_nan=True) by
+    # default, which happily writes a bare `Infinity` / `-Infinity` / `NaN`
+    # token for a non-finite float. That token is not valid JSON: a strict
+    # parser -- the browser's JSON.parse, most notably -- throws on it and
+    # discards the ENTIRE message, not just the offending entry. This proves
+    # the boundary catches that case even if a future producer reintroduces a
+    # non-finite value: the offending vehicle is dropped, the rest of the
+    # frame is delivered, and what's actually sent is provably representable
+    # as strict JSON (allow_nan=False must not raise).
+    mgr = ConnectionManager()
+    healthy = _FakeWebSocket()
+    mgr._connections = {healthy}
+
+    frame = {
+        "type": "simulation.vehicles",
+        "tick": 7,
+        "vehicles": [
+            {"id": "ok", "lat": 37.7, "lng": -122.4, "heading": 90.0, "speed": 5.0, "kind": "civilian"},
+            {
+                "id": "ghost",
+                "lat": float("inf"),
+                "lng": float("inf"),
+                "heading": -1073741824.0,
+                "speed": -1073741824.0,
+                "kind": "civilian",
+            },
+        ],
+    }
+
+    await mgr.broadcast(frame)
+
+    assert len(healthy.sent) == 1
+    sent = healthy.sent[0]
+    assert {v["id"] for v in sent["vehicles"]} == {"ok"}
+    # Round-trips clean through strict JSON -- the actual browser failure
+    # mode this guards against.
+    json.dumps(sent, allow_nan=False)
 
 
 ALLOWED_MESSAGE_TYPES = {"simulation.vehicles", "incident.created", "simulation.error"}

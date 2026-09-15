@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { useSimulationStore } from "../lib/store";
-import type { VehicleState, Incident } from "../lib/types";
+import type { VehicleState, Incident, TrafficLightApproach } from "../lib/types";
 
 const initialState = useSimulationStore.getState();
 
@@ -121,5 +121,74 @@ describe("useSimulationStore", () => {
 
     useSimulationStore.getState().setConnectionStatus("error");
     expect(useSimulationStore.getState().connectionStatus).toBe("error");
+  });
+});
+
+describe("traffic signals", () => {
+  beforeEach(() => {
+    useSimulationStore.setState({ signals: {}, approaches: [] });
+  });
+
+  it("starts with no signals and no approaches", () => {
+    expect(useSimulationStore.getState().signals).toEqual({});
+    expect(useSimulationStore.getState().approaches).toEqual([]);
+  });
+
+  it("updates signals from a vehicle frame", () => {
+    useSimulationStore.getState().handleMessage({
+      type: "simulation.vehicles",
+      tick: 1,
+      vehicles: [],
+      signals: { "tls-1": "rrGG" },
+    });
+    expect(useSimulationStore.getState().signals).toEqual({ "tls-1": "rrGG" });
+  });
+
+  it("retains the previous signals when a frame omits the key", () => {
+    // A transient backend signal-read failure omits `signals`. Blanking ~800
+    // markers to grey for a frame is worse than showing state one tick stale.
+    const store = useSimulationStore.getState();
+    store.handleMessage({
+      type: "simulation.vehicles",
+      tick: 1,
+      vehicles: [],
+      signals: { "tls-1": "rrGG" },
+    });
+    store.handleMessage({ type: "simulation.vehicles", tick: 2, vehicles: [] });
+    expect(useSimulationStore.getState().signals).toEqual({ "tls-1": "rrGG" });
+  });
+
+  it("replaces signals wholesale rather than merging", () => {
+    // The backend sends the complete map every tick, so a merge would
+    // resurrect a TLS that has since dropped out of the simulation.
+    const store = useSimulationStore.getState();
+    store.handleMessage({
+      type: "simulation.vehicles",
+      tick: 1,
+      vehicles: [],
+      signals: { "tls-1": "rr", "tls-2": "GG" },
+    });
+    store.handleMessage({
+      type: "simulation.vehicles",
+      tick: 2,
+      vehicles: [],
+      signals: { "tls-1": "GG" },
+    });
+    expect(useSimulationStore.getState().signals).toEqual({ "tls-1": "GG" });
+  });
+
+  it("stores approaches via setApproaches", () => {
+    const approaches: TrafficLightApproach[] = [
+      {
+        tls_id: "tls-1",
+        lane_id: "north_0",
+        link_indices: [0],
+        lat: 37.7,
+        lng: -122.4,
+        heading: 0,
+      },
+    ];
+    useSimulationStore.getState().setApproaches(approaches);
+    expect(useSimulationStore.getState().approaches).toEqual(approaches);
   });
 });
