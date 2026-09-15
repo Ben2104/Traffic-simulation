@@ -7,7 +7,10 @@ export function buildVehicleLayer(vehicles: VehicleState[]) {
     data: vehicles,
     getPosition: (v: VehicleState) => [v.lng, v.lat],
     getRadius: 6,
-    getFillColor: [255, 200, 0],
+    // primary-container (#00d2ff) from the "Mission Tactical" design system,
+    // so traffic reads as live telemetry against the dark basemap and stays
+    // chromatically distinct from the red incident markers.
+    getFillColor: [0, 210, 255],
   });
 }
 
