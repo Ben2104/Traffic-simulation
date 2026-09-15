@@ -12,6 +12,12 @@ _HERE = os.path.dirname(__file__)
 NETWORK_PATH = os.path.join(_HERE, "..", "..", "..", "..", "networks", "soma", "soma.net.xml")
 ROUTE_PATH = os.path.join(_HERE, "..", "..", "..", "..", "networks", "soma", "soma.rou.xml")
 
+# fixture.net.xml has projParameter="!" and netOffset="0.00,0.00" -- SUMO's
+# sentinel for a network with no real georeference (small synthetic test
+# networks generated without netconvert's --proj.* options). No SUMO process
+# is needed for these tests; they exercise NetworkProjection directly.
+FIXTURE_NET = os.path.join(_HERE, "fixtures", "fixture.net.xml")
+
 STEPS_TO_LET_TRAFFIC_BUILD = 50
 GEOD = Geod(ellps="WGS84")
 
@@ -66,3 +72,31 @@ def test_projection_does_not_swap_lat_and_lng(runner):
     lon, lat = projection.to_lon_lat(1000.0, 1000.0)
     assert -122.42 < lon < -122.38, f"expected a SoMa longitude, got {lon}"
     assert 37.76 < lat < 37.80, f"expected a SoMa latitude, got {lat}"
+
+
+def test_projection_reads_the_unprojected_fixtures_location_element():
+    # "!" is SUMO's sentinel for "this network has no real georeference."
+    # Pins that from_net_file parses it through unchanged rather than
+    # rejecting it or substituting something else.
+    projection = NetworkProjection.from_net_file(FIXTURE_NET)
+    assert projection.proj_parameter == "!"
+    assert projection.net_offset == (0.0, 0.0)
+
+
+def test_projection_is_identity_for_the_unprojected_fixture_network():
+    # convertGeo is an identity transform on unprojected ("!") networks --
+    # confirmed empirically against live SUMO. This pins parity with that
+    # passthrough behaviour so a regression to a crash or wrong numbers
+    # doesn't slip past the other fixture-network tests, which only assert
+    # isinstance(v.lat, float).
+    projection = NetworkProjection.from_net_file(FIXTURE_NET)
+    lon, lat = projection.to_lon_lat(58.4865851258859, -1.6)
+    assert (lon, lat) == (58.4865851258859, -1.6)
+
+
+def test_projection_applies_net_offset_on_the_unprojected_path():
+    # Pins that netOffset subtraction happens on the "!" path exactly as it
+    # does on the projected path, even though fixture.net.xml itself only
+    # exercises a zero offset.
+    projection = NetworkProjection("!", (100.0, 200.0))
+    assert projection.to_lon_lat(150.0, 250.0) == (50.0, 50.0)
