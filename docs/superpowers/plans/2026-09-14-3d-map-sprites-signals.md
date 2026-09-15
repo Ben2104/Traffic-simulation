@@ -238,7 +238,13 @@ within 0.1 m."
 - Consumes: `SimulationRunner.label`, `SimulationRunner._projection` (Task 1).
 - Produces: `SimulationRunner.step()` subscribes newly departed vehicles; `get_vehicle_states()` reads `traci.vehicle.getAllSubscriptionResults()` instead of per-vehicle getters. Return type is unchanged: `list[VehicleState]`.
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Write characterization tests**
+
+This task is a refactor, not new behavior: `get_vehicle_states()` already
+returns the right answer, just expensively. So these are **characterization
+tests** — they pin the current observable behavior, pass before the change,
+and must still pass after it. That is the point; do not try to make them fail
+first.
 
 Create `apps/api/tests/simulation/test_subscriptions.py`:
 
@@ -314,10 +320,14 @@ def test_vehicles_that_leave_drop_out_of_the_results(runner):
     assert not departed & {s.id for s in runner.get_vehicle_states()}
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [ ] **Step 2: Run them against the CURRENT implementation**
 
 Run: `cd apps/api && .venv/bin/pytest tests/simulation/test_subscriptions.py -v`
-Expected: `test_subscription_results_cover_every_vehicle_in_the_simulation` FAILs — `get_vehicle_states()` still uses `getIDList()` and no subscriptions exist, so `getAllSubscriptionResults()` is not yet consulted. (Written before the change, the first test passes trivially; run it again after Step 3 to confirm it still holds. The meaningful red is at Step 4.)
+Expected: **PASS (3 tests)** — against the per-vehicle-getter implementation.
+This baseline is what gives the tests their value: they are only evidence the
+refactor preserved behavior if they passed before it. If any fails here, stop
+and report — the characterization is wrong and must be fixed before touching
+`runner.py`.
 
 - [ ] **Step 3: Add subscriptions to `runner.py`**
 
