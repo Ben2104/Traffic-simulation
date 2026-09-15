@@ -3,6 +3,7 @@ import uuid
 import traci
 
 from .errors import SimulationError
+from .geo import NetworkProjection
 from .models import VehicleState, CollisionResult
 
 
@@ -21,10 +22,17 @@ class SimulationRunner:
         self._label = f"sim-{uuid.uuid4().hex[:8]}"
         self._running = False
         self._started = False
+        self._projection: NetworkProjection | None = None
 
     @property
     def is_running(self) -> bool:
         return self._running
+
+    @property
+    def label(self) -> str:
+        """The TraCI connection label. Exposed so tests can traci.switch() to
+        this runner's connection and compare against reference TraCI calls."""
+        return self._label
 
     def start(self) -> None:
         cmd = [
@@ -38,6 +46,7 @@ class SimulationRunner:
         traci.start(cmd, label=self._label)
         self._started = True
         self._running = True
+        self._projection = NetworkProjection.from_net_file(self.net_file)
 
     def stop(self) -> None:
         if not self._started:
@@ -70,7 +79,7 @@ class SimulationRunner:
             states = []
             for veh_id in traci.vehicle.getIDList():
                 x, y = traci.vehicle.getPosition(veh_id)
-                lon, lat = traci.simulation.convertGeo(x, y)
+                lon, lat = self._projection.to_lon_lat(x, y)
                 states.append(
                     VehicleState(
                         id=veh_id,
@@ -122,7 +131,7 @@ class SimulationRunner:
         stopped = candidates[:2]
         first_veh_id = stopped[0][0]
         x, y = traci.vehicle.getPosition(first_veh_id)
-        lon, lat = traci.simulation.convertGeo(x, y)
+        lon, lat = self._projection.to_lon_lat(x, y)
 
         for veh_id, stop_pos in stopped:
             traci.vehicle.setSpeed(veh_id, 0.0)
