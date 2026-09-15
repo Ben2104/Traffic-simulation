@@ -5,7 +5,8 @@ import traci.constants as tc
 
 from .errors import SimulationError
 from .geo import NetworkProjection
-from .models import VehicleState, CollisionResult
+from .models import VehicleState, CollisionResult, TrafficLightApproach
+from .traffic_lights import group_links_by_incoming_lane, stop_line_heading
 
 # Subscribed once per vehicle, then read in a single getAllSubscriptionResults()
 # call per tick. The previous implementation issued four TraCI round-trips per
@@ -30,6 +31,7 @@ class SimulationRunner:
         self._running = False
         self._started = False
         self._projection: NetworkProjection | None = None
+        self._approaches: list[TrafficLightApproach] | None = None
 
     @property
     def is_running(self) -> bool:
@@ -123,6 +125,43 @@ class SimulationRunner:
         # See step(): FatalTraCIError is not a subclass of TraCIException.
         except (traci.TraCIException, traci.FatalTraCIError) as exc:
             raise SimulationError(str(exc)) from exc
+
+    def get_traffic_light_approaches(self) -> list[TrafficLightApproach]:
+        """Signal geometry for every controlled approach in the network.
+
+        Static for the life of the simulation, so it is computed once and
+        cached: 51 tlLogic programs mean ~500 lane-shape lookups, which is far
+        too many round-trips to repeat per tick.
+        """
+        if self._approaches is not None:
+            return self._approaches
+
+        traci.switch(self._label)
+        approaches: list[TrafficLightApproach] = []
+        for tls_id in traci.trafficlight.getIDList():
+            controlled_links = traci.trafficlight.getControlledLinks(tls_id)
+            for lane_id, indices in group_links_by_incoming_lane(controlled_links).items():
+                shape = traci.lane.getShape(lane_id)
+                # A degenerate one-point shape has no direction to derive a
+                # heading from; skipping is better than emitting a marker
+                # pointing an arbitrary way.
+                if len(shape) < 2:
+                    continue
+                x, y = shape[-1]
+                lon, lat = self._projection.to_lon_lat(x, y)
+                approaches.append(
+                    TrafficLightApproach(
+                        tls_id=tls_id,
+                        lane_id=lane_id,
+                        link_indices=indices,
+                        lat=lat,
+                        lng=lon,
+                        heading=stop_line_heading(shape),
+                    )
+                )
+
+        self._approaches = approaches
+        return approaches
 
     def trigger_collision(self, edge_id: str) -> CollisionResult:
         traci.switch(self._label)
