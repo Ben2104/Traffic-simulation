@@ -67,3 +67,40 @@ def test_vehicles_that_leave_drop_out_of_the_results(runner):
 
     assert departed, "no vehicle completed its route - extend the step count"
     assert not departed & {s.id for s in runner.get_vehicle_states()}
+
+
+def test_step_skips_a_vehicle_that_is_no_longer_known_when_subscribed(runner, monkeypatch):
+    # Pins the fix for a vehicle that departs and arrives within the same
+    # step: by the time step() gets around to subscribing it, SUMO no
+    # longer knows it, and traci.vehicle.subscribe() raises TraCIException
+    # ("... is not known"). That must be swallowed per-vehicle inside
+    # step()'s loop, not escape as a SimulationError - letting it through
+    # would mark_failed() the runner permanently over one vanished vehicle.
+    #
+    # Not reachable with today's soma.net.xml/soma.rou.xml: confirmed
+    # empirically (400 steps, zero ids appearing in both
+    # getDepartedIDList() and getArrivedIDList() in the same step). A real
+    # same-step depart+arrive would need a regenerated route file, a
+    # shorter --step-length, or a single-edge route, so this stubs the two
+    # traci calls involved instead of reproducing it end-to-end.
+    runner.step()  # one real step first, so there is a live connection under the label
+
+    monkeypatch.setattr(
+        traci.simulation, "getDepartedIDList", lambda: ["definitely-not-a-vehicle"]
+    )
+
+    def fake_subscribe(veh_id, variables):
+        raise traci.TraCIException(
+            f"Could not add subscription. Vehicle '{veh_id}' is not known."
+        )
+
+    monkeypatch.setattr(traci.vehicle, "subscribe", fake_subscribe)
+
+    runner.step()  # must not raise despite the rejected subscription
+
+    monkeypatch.undo()
+
+    # The runner is still usable afterwards - the one bad id didn't taint
+    # the connection or any other in-flight state.
+    runner.step()
+    runner.get_vehicle_states()

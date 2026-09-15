@@ -76,7 +76,16 @@ class SimulationRunner:
             # Subscribe vehicles as they enter. One round-trip per tick for the
             # departed list, instead of one per vehicle per tick forever after.
             for veh_id in traci.simulation.getDepartedIDList():
-                traci.vehicle.subscribe(veh_id, _VEHICLE_SUBSCRIPTIONS)
+                try:
+                    traci.vehicle.subscribe(veh_id, _VEHICLE_SUBSCRIPTIONS)
+                except traci.TraCIException:
+                    # A vehicle that departed and arrived within the same step is
+                    # already gone by the time we subscribe, and SUMO answers
+                    # "Vehicle '<id>' is not known". Skipping it is correct: it has
+                    # no state left to stream. Letting it through would surface as a
+                    # SimulationError and mark_failed() the runner permanently,
+                    # killing all traffic over one vanished vehicle.
+                    continue
         # FatalTraCIError is a *sibling* of TraCIException (both subclass
         # Exception directly), not a subclass, so catching TraCIException
         # alone lets "Connection closed by SUMO." escape every downstream
