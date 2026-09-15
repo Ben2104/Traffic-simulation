@@ -113,7 +113,22 @@ def test_step_raises_simulation_error_when_the_sumo_process_dies(runner):
             time.sleep(0.05)
 
 
-def test_get_vehicle_states_raises_simulation_error_when_the_sumo_process_dies(runner):
+# Vehicle state moved to TraCI subscriptions: get_vehicle_states() now reads
+# a local subscription-result cache and performs no socket I/O, so it cannot
+# by itself observe a dead connection. step() is the only method that still
+# touches the socket (traci.simulationStep()), so it is the only method that
+# can detect the process dying. Hence this polls step(), not
+# get_vehicle_states() (see test_get_vehicle_states_alone_cannot_detect_a_dead_sumo_process
+# below, which pins the other half of that contract).
+#
+# NOTE: named test_step_polling_raises_... rather than
+# test_step_raises_simulation_error_when_the_sumo_process_dies (as literally
+# specified) because that exact name is already used above (line 96) by a
+# pre-existing test guarding the FatalTraCIError/TraCIException sibling-class
+# translation. Reusing it here would make Python silently keep only the
+# second definition, dropping the first test from collection with no error.
+# See task-2-report.md for details.
+def test_step_polling_raises_simulation_error_when_the_sumo_process_dies(runner):
     for _ in range(3):
         runner.step()
 
@@ -121,8 +136,24 @@ def test_get_vehicle_states_raises_simulation_error_when_the_sumo_process_dies(r
 
     with pytest.raises(SimulationError):
         for _ in range(20):
-            runner.get_vehicle_states()
+            runner.step()
             time.sleep(0.05)
+
+
+def test_get_vehicle_states_alone_cannot_detect_a_dead_sumo_process(runner):
+    # Deliberately pinning the narrowing above as documented behaviour rather
+    # than leaving it an undiscovered surprise: get_vehicle_states() reads
+    # the subscription cache populated by the last successful step(), so it
+    # returns without raising even after SUMO has died. This is safe only
+    # because tick_once() in loop.py always calls step() first inside the
+    # same try block; a future caller that reads state without stepping
+    # would silently get stale positions instead of an error.
+    for _ in range(3):
+        runner.step()
+
+    _kill_sumo_server(runner)
+
+    runner.get_vehicle_states()  # must not raise
 
 
 def test_trigger_collision_stops_vehicles_on_the_target_edge(runner):

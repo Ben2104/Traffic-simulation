@@ -1,10 +1,17 @@
 import uuid
 
 import traci
+import traci.constants as tc
 
 from .errors import SimulationError
 from .geo import NetworkProjection
 from .models import VehicleState, CollisionResult
+
+# Subscribed once per vehicle, then read in a single getAllSubscriptionResults()
+# call per tick. The previous implementation issued four TraCI round-trips per
+# vehicle per tick (getPosition, convertGeo, getAngle, getSpeed); at 200
+# vehicles on a 0.25 s tick that was roughly 3,200 round-trips per second.
+_VEHICLE_SUBSCRIPTIONS = (tc.VAR_POSITION, tc.VAR_ANGLE, tc.VAR_SPEED)
 
 
 class SimulationRunner:
@@ -66,6 +73,10 @@ class SimulationRunner:
         try:
             traci.switch(self._label)
             traci.simulationStep()
+            # Subscribe vehicles as they enter. One round-trip per tick for the
+            # departed list, instead of one per vehicle per tick forever after.
+            for veh_id in traci.simulation.getDepartedIDList():
+                traci.vehicle.subscribe(veh_id, _VEHICLE_SUBSCRIPTIONS)
         # FatalTraCIError is a *sibling* of TraCIException (both subclass
         # Exception directly), not a subclass, so catching TraCIException
         # alone lets "Connection closed by SUMO." escape every downstream
@@ -74,19 +85,29 @@ class SimulationRunner:
             raise SimulationError(str(exc)) from exc
 
     def get_vehicle_states(self) -> list[VehicleState]:
+        # Reads the local subscription-result cache populated by the last
+        # step() call and performs no socket I/O of its own. A dead TraCI
+        # connection is therefore NOT detected here - callers that need to
+        # detect one must call step(), which still round-trips to the socket.
         try:
             traci.switch(self._label)
             states = []
-            for veh_id in traci.vehicle.getIDList():
-                x, y = traci.vehicle.getPosition(veh_id)
+            for veh_id, values in traci.vehicle.getAllSubscriptionResults().items():
+                # A vehicle can be present in the result map with an incomplete
+                # value set if it departed between the subscribe and the read.
+                # Skip it rather than raising a KeyError that would escape
+                # every SimulationError boundary as a programming error.
+                if tc.VAR_POSITION not in values:
+                    continue
+                x, y = values[tc.VAR_POSITION]
                 lon, lat = self._projection.to_lon_lat(x, y)
                 states.append(
                     VehicleState(
                         id=veh_id,
                         lat=lat,
                         lng=lon,
-                        heading=traci.vehicle.getAngle(veh_id),
-                        speed=traci.vehicle.getSpeed(veh_id),
+                        heading=values[tc.VAR_ANGLE],
+                        speed=values[tc.VAR_SPEED],
                     )
                 )
             return states
