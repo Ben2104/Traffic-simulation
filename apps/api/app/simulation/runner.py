@@ -14,6 +14,10 @@ from .traffic_lights import group_links_by_incoming_lane, stop_line_heading
 # vehicles on a 0.25 s tick that was roughly 3,200 round-trips per second.
 _VEHICLE_SUBSCRIPTIONS = (tc.VAR_POSITION, tc.VAR_ANGLE, tc.VAR_SPEED)
 
+# TLS ids are fixed by the network, so every program is subscribed once at
+# startup and the whole set is read in one call per tick.
+_TRAFFIC_LIGHT_SUBSCRIPTIONS = (tc.TL_RED_YELLOW_GREEN_STATE,)
+
 
 class SimulationRunner:
     def __init__(
@@ -56,6 +60,8 @@ class SimulationRunner:
         self._started = True
         self._running = True
         self._projection = NetworkProjection.from_net_file(self.net_file)
+        for tls_id in traci.trafficlight.getIDList():
+            traci.trafficlight.subscribe(tls_id, _TRAFFIC_LIGHT_SUBSCRIPTIONS)
 
     def stop(self) -> None:
         if not self._started:
@@ -162,6 +168,19 @@ class SimulationRunner:
 
         self._approaches = approaches
         return approaches
+
+    def get_traffic_light_states(self) -> dict[str, str]:
+        """Current phase string for every signal program, keyed by TLS id."""
+        try:
+            traci.switch(self._label)
+            return {
+                tls_id: values[tc.TL_RED_YELLOW_GREEN_STATE]
+                for tls_id, values in traci.trafficlight.getAllSubscriptionResults().items()
+                if tc.TL_RED_YELLOW_GREEN_STATE in values
+            }
+        # See step(): FatalTraCIError is not a subclass of TraCIException.
+        except (traci.TraCIException, traci.FatalTraCIError) as exc:
+            raise SimulationError(str(exc)) from exc
 
     def trigger_collision(self, edge_id: str) -> CollisionResult:
         traci.switch(self._label)

@@ -1,6 +1,7 @@
 import os
 
 import pytest
+import traci
 
 from app.simulation.runner import SimulationRunner
 from app.simulation.traffic_lights import (
@@ -98,3 +99,48 @@ def test_every_approach_has_a_unique_tls_and_lane_pair(runner):
     approaches = runner.get_traffic_light_approaches()
     keys = [(a.tls_id, a.lane_id) for a in approaches]
     assert len(keys) == len(set(keys)), "a lane was emitted twice for one TLS"
+
+
+VALID_STATE_CHARS = set("rRyYgGsSuUoO")
+
+
+def test_traffic_light_states_cover_every_program_in_the_network(runner):
+    runner.step()
+    states = runner.get_traffic_light_states()
+
+    traci.switch(runner.label)
+    assert set(states) == set(traci.trafficlight.getIDList())
+    assert len(states) >= 40, "expected ~51 tlLogic programs in the SoMa network"
+
+
+def test_traffic_light_state_strings_are_well_formed(runner):
+    runner.step()
+    for tls_id, state in runner.get_traffic_light_states().items():
+        assert state, f"{tls_id} returned an empty state string"
+        assert set(state) <= VALID_STATE_CHARS, (
+            f"{tls_id} state {state!r} contains an unknown signal character"
+        )
+
+
+def test_state_string_is_long_enough_to_index_every_approachs_links(runner):
+    # An approach's link_indices are offsets into its TLS's state string. If
+    # the string were shorter than the largest index, the frontend would read
+    # undefined and render the approach grey forever.
+    runner.step()
+    states = runner.get_traffic_light_states()
+    for approach in runner.get_traffic_light_approaches():
+        state = states[approach.tls_id]
+        assert max(approach.link_indices) < len(state), (
+            f"{approach.tls_id} lane {approach.lane_id} indexes past its state string"
+        )
+
+
+def test_traffic_light_states_change_as_the_simulation_runs(runner):
+    # Proves phases are actually advancing rather than being read once and
+    # frozen -- a frozen map of signals looks identical to a working one in a
+    # single-frame screenshot.
+    first = runner.get_traffic_light_states()
+    for _ in range(200):
+        runner.step()
+    later = runner.get_traffic_light_states()
+    assert first != later, "no signal changed phase over 200 steps"
