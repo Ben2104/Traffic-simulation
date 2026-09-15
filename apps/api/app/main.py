@@ -13,6 +13,7 @@ from .incidents.store import IncidentStore
 from .api import deps
 from .api.ws import router as ws_router
 from .api.incidents import router as incidents_router
+from .api.traffic_lights import router as traffic_lights_router
 
 log = logging.getLogger(__name__)
 
@@ -49,6 +50,19 @@ async def lifespan(app: FastAPI):
     deps.deps.runner = runner
     deps.deps.store = IncidentStore()
 
+    # Warm the approach cache before the first request. Signal geometry is
+    # decorative, so a failure here must not prevent the simulation starting:
+    # the map simply renders without signal markers.
+    try:
+        runner.get_traffic_light_approaches()
+    except Exception:
+        log.exception("traffic light geometry extraction failed; signals will be absent")
+        # Reaching into the private cache attribute is intentional here: it's
+        # the narrowest way to poison the cache with an empty list so the
+        # route returns [] instead of retrying a broken extraction on every
+        # request.
+        runner._approaches = []
+
     task = asyncio.create_task(run_tick_loop(runner, settings.tick_interval))
     task.add_done_callback(_log_task_exception)
     try:
@@ -71,3 +85,4 @@ app.add_middleware(
 )
 app.include_router(ws_router)
 app.include_router(incidents_router)
+app.include_router(traffic_lights_router)
