@@ -1,16 +1,11 @@
 "use client";
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import Map, { MapRef, useControl } from "react-map-gl/mapbox";
 import { MapboxOverlay } from "@deck.gl/mapbox";
 import type { Layer } from "@deck.gl/core";
 import type mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
-import {
-  buildIncidentLayer,
-  buildSignalLayer,
-  buildVehicleIconLayer,
-} from "../lib/layers";
-import { buildSpriteAtlas } from "../lib/car-sprites";
+import { buildIncidentLayer, buildSignalLayer } from "../lib/layers";
 import {
   DEFAULT_VIEW_STATE,
   DEM_SOURCE_ID,
@@ -37,6 +32,35 @@ const TICK_DURATION_MS = 250;
 // page.tsx; no env-var indirection exists in this project yet.
 const TRAFFIC_LIGHTS_URL = "http://localhost:8000/traffic-lights";
 
+const VEHICLE_SOURCE_ID = "vehicles";
+const VEHICLE_LAYER_ID = "vehicles-circles";
+
+/**
+ * Vehicles render as a native Mapbox GL circle layer, not a deck.gl layer.
+ *
+ * deck.gl's MapboxOverlay (both "overlaid" and "interleaved" modes, IconLayer
+ * and ScatterplotLayer alike) produces zero rasterized output in this stack --
+ * verified with gl.readPixels() reading a fully transparent framebuffer
+ * immediately inside deck's own onAfterRender hook, correct viewport, no GL
+ * errors, deck's internal metrics reporting successful draws the entire time.
+ * Mapbox's own rendering (buildings, tiles, and a `circle` layer fed the same
+ * vehicle coordinates) renders correctly throughout. Signals still go through
+ * deck.gl's ColumnLayer and are suspected to carry the same defect --
+ * unconfirmed, out of scope for this fix.
+ */
+function vehiclesToGeoJSON(
+  vehicles: VehicleState[]
+): GeoJSON.FeatureCollection<GeoJSON.Point, { id: string }> {
+  return {
+    type: "FeatureCollection",
+    features: vehicles.map((v) => ({
+      type: "Feature",
+      geometry: { type: "Point", coordinates: [v.lng, v.lat] },
+      properties: { id: v.id },
+    })),
+  };
+}
+
 /**
  * Renders deck.gl layers as a native mapbox-gl control (via MapboxOverlay),
  * so the vehicle layer automatically tracks the base map's camera on every
@@ -61,7 +85,6 @@ export interface MapViewProps {
 
 export default function MapView({ mapboxToken, flyToTarget }: MapViewProps) {
   const mapRef = useRef<MapRef | null>(null);
-  const [displayedVehicles, setDisplayedVehicles] = useState<VehicleState[]>([]);
   const [style, dispatch] = useReducer(mapStyleReducer, INITIAL_MAP_STYLE);
   const [buildingsDisabled, setBuildingsDisabled] = useState(false);
   // The underlying mapbox-gl instance is created asynchronously (react-map-gl
@@ -77,19 +100,26 @@ export default function MapView({ mapboxToken, flyToTarget }: MapViewProps) {
   const approaches = useSimulationStore((s) => s.approaches);
   const setApproaches = useSimulationStore((s) => s.setApproaches);
 
-  // Built once: rasterising 60 cells on every render would thrash the GPU
-  // texture upload. Null under SSR and in jsdom, where the layer falls back.
-  const sprites = useMemo(() => buildSpriteAtlas(), []);
-
   useEffect(() => {
     let rafId: number;
 
     const tick = () => {
       const { vehicles, previousVehicles, lastTickAt } = useSimulationStore.getState();
       const elapsedMs = Date.now() - lastTickAt;
-      setDisplayedVehicles(
-        interpolateVehicles(previousVehicles, vehicles, TICK_DURATION_MS, elapsedMs)
+      const interpolated = interpolateVehicles(
+        previousVehicles,
+        vehicles,
+        TICK_DURATION_MS,
+        elapsedMs
       );
+      // Pushed straight to the Mapbox source -- no React state, no deck.gl
+      // layer object. `setData` is the API Mapbox itself recommends for
+      // streaming updates to a GeoJSON source at animation-frame rate.
+      const map = mapRef.current?.getMap();
+      const source = map?.getSource(VEHICLE_SOURCE_ID) as
+        | mapboxgl.GeoJSONSource
+        | undefined;
+      source?.setData(vehiclesToGeoJSON(interpolated));
       rafId = requestAnimationFrame(tick);
     };
 
@@ -189,6 +219,28 @@ export default function MapView({ mapboxToken, flyToTarget }: MapViewProps) {
     const map = mapRef.current?.getMap();
     if (!map || !map.isStyleLoaded()) return;
     for (const instruction of reapplyPlan(style)) runInstruction(map, instruction);
+
+    // setStyle() destroys this like any other custom source/layer, so it is
+    // re-added here alongside the rest of the plan rather than once on mount.
+    if (!map.getSource(VEHICLE_SOURCE_ID)) {
+      map.addSource(VEHICLE_SOURCE_ID, {
+        type: "geojson",
+        data: { type: "FeatureCollection", features: [] },
+      });
+      map.addLayer({
+        id: VEHICLE_LAYER_ID,
+        type: "circle",
+        source: VEHICLE_SOURCE_ID,
+        paint: {
+          "circle-radius": 4,
+          // primary-container (#00d2ff) from the "Mission Tactical" design
+          // system, chromatically distinct from the red incident markers.
+          "circle-color": "#00d2ff",
+          "circle-stroke-width": 1,
+          "circle-stroke-color": "#0a1420",
+        },
+      });
+    }
   }, [style, runInstruction]);
 
   useEffect(() => {
@@ -228,14 +280,12 @@ export default function MapView({ mapboxToken, flyToTarget }: MapViewProps) {
         mapStyle={STYLE_URL[style.basemap]}
         onLoad={() => setMapReady(true)}
       >
-        {/* Signals first (ground furniture), then vehicles, then incidents on
-            top so the demo's climax is never occluded by traffic. */}
+        {/* Vehicles render as a native Mapbox circle layer (added in
+            applyStyle above), not through deck.gl -- see the comment on
+            vehiclesToGeoJSON. Signals and incidents still go through
+            deck.gl's MapboxOverlay. */}
         <DeckGLOverlay
-          layers={[
-            buildSignalLayer(approaches, signals),
-            buildVehicleIconLayer(displayedVehicles, sprites),
-            buildIncidentLayer(incidents),
-          ]}
+          layers={[buildSignalLayer(approaches, signals), buildIncidentLayer(incidents)]}
         />
       </Map>
     </>
